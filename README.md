@@ -1,5 +1,17 @@
 # vinext-starter
 
+## Laboratorio de hidrocarburos
+
+Simulación didáctica para construir alcanos lineales y ramificados, identificar
+la cadena principal, explorar sustituyentes alquilo y practicar nomenclatura
+IUPAC en vista condensada o esquelética.
+
+- Sitio principal: https://laboratorio-hidrocarburos.jalexsa.chatgpt.site
+- GitHub Pages: https://jalexsa.github.io/laboratorio-hidrocarburos/
+
+La versión de GitHub Pages se genera automáticamente desde la rama `main` con
+`npm run build:pages`.
+
 A clean full-stack starter running on
 [vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
 Drizzle support.

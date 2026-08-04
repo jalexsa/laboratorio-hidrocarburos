@@ -1,0 +1,18 @@
+import react from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
+import { fileURLToPath } from "node:url";
+
+const pagesRoot = fileURLToPath(new URL("./pages-src", import.meta.url));
+const outputDirectory = fileURLToPath(new URL("./dist-pages", import.meta.url));
+
+export default defineConfig({
+  root: pagesRoot,
+  base: "/laboratorio-hidrocarburos/",
+  plugins: [react()],
+  publicDir: false,
+  build: {
+    outDir: outputDirectory,
+    emptyOutDir: true,
+    target: "es2020",
+  },
+});
