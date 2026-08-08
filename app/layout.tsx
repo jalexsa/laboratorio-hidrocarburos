@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Constructor de hidrocarburos",
   description:
-    "Simulación didáctica para construir alcanos ramificados y analizar su nomenclatura IUPAC.",
+    "Simulación didáctica para construir alcanos, alquenos, alquinos y estructuras con varios anillos cíclicos o aromáticos, y analizar su nomenclatura IUPAC.",
   other: {
     "codex-preview": "development",
   },
