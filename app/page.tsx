@@ -178,45 +178,78 @@ const simpleAliasPrefixes: Record<string, string> = {
 
 type InteractiveNamePart = {
   text: string;
-  systematic?: keyof typeof commonAlkylAliases;
+  systematic?: AlkylAliasKey;
   common?: string;
   active?: boolean;
 };
+
+type AlkylAliasKey = keyof typeof commonAlkylAliases;
+
+const escapeRegularExpression = (value: string) =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 function getInteractiveNameParts(
   name: string,
   enabledAliases: readonly string[],
 ): InteractiveNamePart[] {
-  const aliasNames = Object.keys(commonAlkylAliases)
-    .map((item) => item.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-    .join("|");
-  const pattern = new RegExp(
-    `((bis|tris|tetrakis|pentakis|hexakis)?\\((${aliasNames})\\))`,
-    "g",
-  );
   const enabled = new Set(enabledAliases);
   const parts: InteractiveNamePart[] = [];
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
+  const simpleMultipliers = simplePrefixes.slice(2).filter(Boolean).join("|");
+  const complexMultipliers = Object.keys(simpleAliasPrefixes).join("|");
+  const aliases = Object.entries(commonAlkylAliases) as [AlkylAliasKey, string][];
+  let cursor = 0;
 
-  while ((match = pattern.exec(name)) !== null) {
-    if (match.index > lastIndex) {
-      parts.push({ text: name.slice(lastIndex, match.index) });
-    }
-    const systematic = match[3] as keyof typeof commonAlkylAliases;
-    const common = commonAlkylAliases[systematic];
-    const active = enabled.has(systematic);
-    const prefix = match[2] ? simpleAliasPrefixes[match[2]] ?? "" : "";
-    parts.push({
-      text: active ? `${prefix}${common}` : match[0],
-      systematic,
-      common,
-      active,
+  while (cursor < name.length) {
+    let nextMatch:
+      | {
+          index: number;
+          text: string;
+          systematic: AlkylAliasKey;
+          common: string;
+          active: boolean;
+        }
+      | undefined;
+
+    aliases.forEach(([systematic, common]) => {
+      const active = enabled.has(systematic);
+      const source = active
+        ? `(?:${simpleMultipliers})?${escapeRegularExpression(common)}`
+        : `(?:${complexMultipliers})?\\(${escapeRegularExpression(systematic)}\\)`;
+      const match = new RegExp(source).exec(name.slice(cursor));
+      if (!match) return;
+      const candidate = {
+        index: cursor + match.index,
+        text: match[0],
+        systematic,
+        common,
+        active,
+      };
+      if (
+        !nextMatch
+        || candidate.index < nextMatch.index
+        || (candidate.index === nextMatch.index && candidate.text.length > nextMatch.text.length)
+      ) {
+        nextMatch = candidate;
+      }
     });
-    lastIndex = pattern.lastIndex;
+
+    if (!nextMatch) {
+      parts.push({ text: name.slice(cursor) });
+      break;
+    }
+
+    if (nextMatch.index > cursor) {
+      parts.push({ text: name.slice(cursor, nextMatch.index) });
+    }
+    parts.push({
+      text: nextMatch.text,
+      systematic: nextMatch.systematic,
+      common: nextMatch.common,
+      active: nextMatch.active,
+    });
+    cursor = nextMatch.index + nextMatch.text.length;
   }
 
-  if (lastIndex < name.length) parts.push({ text: name.slice(lastIndex) });
   return parts.length ? parts : [{ text: name }];
 }
 
@@ -940,11 +973,71 @@ function compareNumberLists(a: number[], b: number[]) {
 
 function stripForAlphabetizing(name: string) {
   return name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("es")
+    .trim()
+    .replace(/^(?:(?:\d+(?:,\d+)*|n(?:,n)*)-)+/, "")
     .replace(/[0-9,()\-]/g, "")
-    .replace(/^(di|tri|tetra|penta|hexa|bis|tris|tetrakis)/, "");
+    .replace(/^(?:di|tri|tetra|penta|hexa|hepta|octa|bis|tris|tetrakis|pentakis|hexakis)/, "")
+    .replace(/^(?:sec|terc|tert)/, "");
 }
 
-function formatSubstituentGroups(substituents: NamedSubstituent[]) {
+function compareAlphabeticalNames(left: string, right: string) {
+  const keyComparison = stripForAlphabetizing(left).localeCompare(
+    stripForAlphabetizing(right),
+    "es",
+    { sensitivity: "base" },
+  );
+  return keyComparison || left.localeCompare(right, "es", { sensitivity: "base" });
+}
+
+function resolveSubstituentNaming(
+  substituent: NamedSubstituent,
+  enabledAliases: ReadonlySet<string>,
+) {
+  const systematic = substituent.name as AlkylAliasKey;
+  const common = commonAlkylAliases[systematic];
+  if (common && enabledAliases.has(systematic)) {
+    return {
+      name: common,
+      sortName: stripForAlphabetizing(common),
+      complex: false,
+    };
+  }
+  return {
+    name: substituent.name,
+    sortName: stripForAlphabetizing(substituent.name),
+    complex: substituent.complex,
+  };
+}
+
+function compareSubstituentAlphabeticalLocants(
+  left: NamedSubstituent[],
+  right: NamedSubstituent[],
+  enabledAliases: readonly string[] = [],
+) {
+  const enabled = new Set(enabledAliases);
+  const orderedLocants = (items: NamedSubstituent[]) => [...items]
+    .sort((a, b) => {
+      const leftName = resolveSubstituentNaming(a, enabled);
+      const rightName = resolveSubstituentNaming(b, enabled);
+      return compareAlphabeticalNames(leftName.sortName, rightName.sortName)
+        || a.locant - b.locant;
+    })
+    .map((item) => item.locant);
+  return compareNumberLists(orderedLocants(left), orderedLocants(right));
+}
+
+function sortFormattedPrefixParts(prefixParts: string[]) {
+  return [...prefixParts].sort(compareAlphabeticalNames);
+}
+
+function formatSubstituentGroups(
+  substituents: NamedSubstituent[],
+  enabledAliases: readonly string[] = [],
+) {
+  const enabled = new Set(enabledAliases);
   const groups = new Map<string, NamedSubstituent[]>();
   substituents.forEach((substituent) => {
     const current = groups.get(substituent.name) ?? [];
@@ -953,10 +1046,14 @@ function formatSubstituentGroups(substituents: NamedSubstituent[]) {
   });
 
   return [...groups.values()]
-    .sort((left, right) => left[0].sortName.localeCompare(right[0].sortName, "es"))
+    .sort((left, right) => {
+      const leftName = resolveSubstituentNaming(left[0], enabled);
+      const rightName = resolveSubstituentNaming(right[0], enabled);
+      return compareAlphabeticalNames(leftName.sortName, rightName.sortName);
+    })
     .map((group) => {
       const locants = group.map((item) => item.locant).sort((a, b) => a - b).join(",");
-      const { name, complex } = group[0];
+      const { name, complex } = resolveSubstituentNaming(group[0], enabled);
       if (group.length === 1) {
         return complex ? `${locants}-(${name})` : `${locants}-${name}`;
       }
@@ -1019,7 +1116,8 @@ function nameSubstituent(root: number, parent: number, adjacency: Map<number, nu
       if (left.branches.length !== right.branches.length) return right.branches.length - left.branches.length;
       const leftLocants = left.branches.map((branch) => branch.locant).sort((a, b) => a - b);
       const rightLocants = right.branches.map((branch) => branch.locant).sort((a, b) => a - b);
-      return compareNumberLists(leftLocants, rightLocants);
+      const locantComparison = compareNumberLists(leftLocants, rightLocants);
+      return locantComparison || compareSubstituentAlphabeticalLocants(left.branches, right.branches);
     });
 
   const chosen = candidates[0];
@@ -1145,7 +1243,11 @@ function orientedRingPaths(ring: RingInfo) {
   return paths;
 }
 
-function ringCandidates(molecule: Molecule, ring: RingInfo) {
+function ringCandidates(
+  molecule: Molecule,
+  ring: RingInfo,
+  enabledAliases: readonly string[] = [],
+) {
   const adjacency = buildAdjacency(molecule);
   const bondOrders = new Map(
     molecule.bonds.map((bond) => [bondKey(bond[0], bond[1]), getBondOrder(bond)]),
@@ -1221,13 +1323,11 @@ function ringCandidates(molecule: Molecule, ring: RingInfo) {
     const locantComparison = compareNumberLists(leftLocants, rightLocants);
     if (locantComparison !== 0) return locantComparison;
 
-    const leftAlphabetical = [...left.substituents]
-      .sort((a, b) => a.sortName.localeCompare(b.sortName, "es"))
-      .map((item) => item.locant);
-    const rightAlphabetical = [...right.substituents]
-      .sort((a, b) => a.sortName.localeCompare(b.sortName, "es"))
-      .map((item) => item.locant);
-    return compareNumberLists(leftAlphabetical, rightAlphabetical);
+    return compareSubstituentAlphabeticalLocants(
+      left.substituents,
+      right.substituents,
+      enabledAliases,
+    );
   });
 
   return candidates;
@@ -1237,16 +1337,20 @@ function buildRingAnalysis(
   molecule: Molecule,
   ring: RingInfo,
   family: RingKind | "polycyclic",
+  enabledAliases: readonly string[] = [],
 ): Analysis {
-  const chosen = ringCandidates(molecule, ring)[0];
+  const chosen = ringCandidates(molecule, ring, enabledAliases)[0];
   const chainName = unsaturatedRingBaseName(
     ring,
     chosen.doubleBondLocants,
     chosen.tripleBondLocants,
   );
-  const substituentParts = formatSubstituentGroups(chosen.substituents);
-  let name = chosen.substituents.length === 1
-    ? `${chosen.substituents[0].complex ? `(${chosen.substituents[0].name})` : chosen.substituents[0].name}${chainName}`
+  const substituentParts = formatSubstituentGroups(chosen.substituents, enabledAliases);
+  const singleSubstituent = chosen.substituents.length === 1
+    ? resolveSubstituentNaming(chosen.substituents[0], new Set(enabledAliases))
+    : undefined;
+  let name = singleSubstituent
+    ? `${singleSubstituent.complex ? `(${singleSubstituent.name})` : singleSubstituent.name}${chainName}`
     : substituentParts.length
       ? `${substituentParts.join("-")}${chainName}`
       : chainName;
@@ -1280,12 +1384,12 @@ function buildRingAnalysis(
   };
 }
 
-function analyzeRingMolecule(molecule: Molecule): Analysis {
+function analyzeRingMolecule(molecule: Molecule, enabledAliases: readonly string[] = []): Analysis {
   const ring = molecule.rings![0];
-  return buildRingAnalysis(molecule, ring, ring.kind);
+  return buildRingAnalysis(molecule, ring, ring.kind, enabledAliases);
 }
 
-function analyzeMultiRingMolecule(molecule: Molecule): Analysis {
+function analyzeMultiRingMolecule(molecule: Molecule, enabledAliases: readonly string[] = []): Analysis {
   const rings = molecule.rings!;
   const adjacency = buildAdjacency(molecule);
   const ranked = [...rings].sort((left, right) => {
@@ -1306,12 +1410,15 @@ function analyzeMultiRingMolecule(molecule: Molecule): Analysis {
     if (left.kind !== right.kind) return left.kind === "aromatic" ? -1 : 1;
     return right.atomIds.length - left.atomIds.length;
   });
-  return buildRingAnalysis(molecule, ranked[0], "polycyclic");
+  return buildRingAnalysis(molecule, ranked[0], "polycyclic", enabledAliases);
 }
 
-function analyzeHydrocarbonMolecule(molecule: Molecule): Analysis {
-  if ((molecule.rings?.length ?? 0) > 1) return analyzeMultiRingMolecule(molecule);
-  if (molecule.rings?.length === 1) return analyzeRingMolecule(molecule);
+function analyzeHydrocarbonMolecule(
+  molecule: Molecule,
+  enabledAliases: readonly string[] = [],
+): Analysis {
+  if ((molecule.rings?.length ?? 0) > 1) return analyzeMultiRingMolecule(molecule, enabledAliases);
+  if (molecule.rings?.length === 1) return analyzeRingMolecule(molecule, enabledAliases);
 
   const adjacency = buildAdjacency(molecule);
   const bondOrders = new Map(
@@ -1378,13 +1485,11 @@ function analyzeHydrocarbonMolecule(molecule: Molecule): Analysis {
     const locantComparison = compareNumberLists(leftLocants, rightLocants);
     if (locantComparison !== 0) return locantComparison;
 
-    const leftAlphabetical = [...left.substituents]
-      .sort((a, b) => a.sortName.localeCompare(b.sortName, "es"))
-      .map((item) => item.locant);
-    const rightAlphabetical = [...right.substituents]
-      .sort((a, b) => a.sortName.localeCompare(b.sortName, "es"))
-      .map((item) => item.locant);
-    return compareNumberLists(leftAlphabetical, rightAlphabetical);
+    return compareSubstituentAlphabeticalLocants(
+      left.substituents,
+      right.substituents,
+      enabledAliases,
+    );
   });
 
   const chosen = candidates[0];
@@ -1393,7 +1498,7 @@ function analyzeHydrocarbonMolecule(molecule: Molecule): Analysis {
     chosen.doubleBondLocants,
     chosen.tripleBondLocants,
   );
-  const substituentParts = formatSubstituentGroups(chosen.substituents);
+  const substituentParts = formatSubstituentGroups(chosen.substituents, enabledAliases);
   const name = substituentParts.length ? `${substituentParts.join("-")}${chainName}` : chainName;
   const numberedAtoms = new Map(chosen.path.map((atomId, index) => [atomId, index + 1]));
 
@@ -1758,6 +1863,7 @@ function analyzeFunctionalAcyclic(
   skeleton: Molecule,
   groups: FunctionalGroup[],
   primaryKind: FunctionalGroupKind | undefined,
+  enabledAliases: readonly string[] = [],
 ): Analysis {
   const adjacency = buildAdjacency(skeleton);
   const bondOrders = new Map(
@@ -1834,7 +1940,12 @@ function analyzeFunctionalAcyclic(
     if (doubleComparison !== 0) return doubleComparison;
     const leftLocants = left.substituents.map((item) => item.locant).sort((a, b) => a - b);
     const rightLocants = right.substituents.map((item) => item.locant).sort((a, b) => a - b);
-    return compareNumberLists(leftLocants, rightLocants);
+    const locantComparison = compareNumberLists(leftLocants, rightLocants);
+    return locantComparison || compareSubstituentAlphabeticalLocants(
+      left.substituents,
+      right.substituents,
+      enabledAliases,
+    );
   });
 
   const chosen = candidates[0];
@@ -1858,7 +1969,7 @@ function analyzeFunctionalAcyclic(
           : undefined,
       )
     : baseHydrocarbonName;
-  let substituentParts = formatSubstituentGroups(chosen.substituents);
+  let substituentParts = formatSubstituentGroups(chosen.substituents, enabledAliases);
   if (
     chosen.path.length <= 2
     && chosen.substituents.length === 1
@@ -1866,10 +1977,10 @@ function analyzeFunctionalAcyclic(
   ) {
     substituentParts = substituentParts.map((part) => part.replace(/^1-/, ""));
   }
-  substituentParts = [
+  substituentParts = sortFormattedPrefixParts([
     ...nitrogenSubstituentPrefixes(primaryGroup, chosen.path, molecule, skeleton),
     ...substituentParts,
-  ];
+  ]);
   const name = combinePrefixAndParent(substituentParts, chainName);
 
   return {
@@ -1940,12 +2051,13 @@ function analyzeFunctionalRing(
   groups: FunctionalGroup[],
   primaryKind: FunctionalGroupKind | undefined,
   baseAnalysis: Analysis,
+  enabledAliases: readonly string[] = [],
 ): Analysis {
   const ring = skeleton.rings?.find(
     (candidate) => candidate.atomIds.some((atomId) => baseAnalysis.mainChain.includes(atomId)),
   );
   if (!ring) return { ...baseAnalysis, formula: molecularFormula(molecule), functionalGroups: groups };
-  const candidates = ringCandidates(skeleton, ring).map((candidate) => {
+  const candidates = ringCandidates(skeleton, ring, enabledAliases).map((candidate) => {
     const primaryLocants = primaryKind
       ? groups
           .filter((group) => group.kind === primaryKind)
@@ -1981,9 +2093,14 @@ function analyzeFunctionalRing(
       [...right.doubleBondLocants, ...right.tripleBondLocants].sort((a, b) => a - b),
     );
     if (multipleComparison !== 0) return multipleComparison;
-    return compareNumberLists(
+    const locantComparison = compareNumberLists(
       left.substituents.map((item) => item.locant).sort((a, b) => a - b),
       right.substituents.map((item) => item.locant).sort((a, b) => a - b),
+    );
+    return locantComparison || compareSubstituentAlphabeticalLocants(
+      left.substituents,
+      right.substituents,
+      enabledAliases,
     );
   });
   const chosen = candidates[0];
@@ -1998,11 +2115,14 @@ function analyzeFunctionalRing(
   const chainName = primaryKind
     ? makeRingFunctionalParentName(ring, primaryKind, chosen.primaryLocants, primaryGroup, skeleton)
     : hydrocarbonBase;
-  const ringPrefixParts = !primaryKind && chosen.substituents.length === 1
-    ? [chosen.substituents[0].complex
-        ? `(${chosen.substituents[0].name})`
-        : chosen.substituents[0].name]
-    : formatSubstituentGroups(chosen.substituents);
+  const singleSubstituent = chosen.substituents.length === 1
+    ? resolveSubstituentNaming(chosen.substituents[0], new Set(enabledAliases))
+    : undefined;
+  const ringPrefixParts = !primaryKind && singleSubstituent
+    ? [singleSubstituent.complex
+        ? `(${singleSubstituent.name})`
+        : singleSubstituent.name]
+    : formatSubstituentGroups(chosen.substituents, enabledAliases);
   const name = combinePrefixAndParent(ringPrefixParts, chainName);
   const commonName = chainName === "bencenamina" ? "anilina" : baseAnalysis.commonName;
 
@@ -2023,18 +2143,25 @@ function analyzeFunctionalRing(
   };
 }
 
-function analyzeMolecule(molecule: Molecule): Analysis {
+export function analyzeMolecule(molecule: Molecule, enabledAliases: readonly string[] = []): Analysis {
   const skeleton = carbonSkeleton(molecule);
-  const baseAnalysis = analyzeHydrocarbonMolecule(skeleton);
+  const baseAnalysis = analyzeHydrocarbonMolecule(skeleton, enabledAliases);
   const groups = detectFunctionalGroups(molecule);
   if (!groups.length) {
     return { ...baseAnalysis, formula: molecularFormula(molecule), functionalGroups: [] };
   }
   const primaryKind = selectPrimaryFunctionalGroup(groups);
   if (skeleton.rings?.length) {
-    return analyzeFunctionalRing(molecule, skeleton, groups, primaryKind, baseAnalysis);
+    return analyzeFunctionalRing(
+      molecule,
+      skeleton,
+      groups,
+      primaryKind,
+      baseAnalysis,
+      enabledAliases,
+    );
   }
-  return analyzeFunctionalAcyclic(molecule, skeleton, groups, primaryKind);
+  return analyzeFunctionalAcyclic(molecule, skeleton, groups, primaryKind, enabledAliases);
 }
 
 const directionOptions = [
@@ -2157,7 +2284,10 @@ export default function Home() {
   const [notice, setNotice] = useState("Selecciona un carbono para añadir otro o toca un enlace para cambiar su orden.");
 
   const adjacency = useMemo(() => buildAdjacency(molecule), [molecule]);
-  const analysis = useMemo(() => analyzeMolecule(molecule), [molecule]);
+  const analysis = useMemo(
+    () => analyzeMolecule(molecule, commonAlkylNameSelections),
+    [molecule, commonAlkylNameSelections],
+  );
   const selectedAtom = molecule.atoms.find((atom) => atom.id === selectedId) ?? molecule.atoms[0];
   const mainChainSet = useMemo(() => new Set(analysis.mainChain), [analysis.mainChain]);
   const interactiveNameParts = useMemo(
@@ -2230,8 +2360,8 @@ export default function Home() {
     );
     setNotice(
       currentlyActive
-        ? `${common} volvió a mostrarse como (${systematic}).`
-        : `(${systematic}) ahora se muestra como ${common}. Pulsa nuevamente el nombre para volver a la forma sistemática.`,
+        ? `${common} volvió a mostrarse como (${systematic}) y se recalculó el orden alfabético.`
+        : `(${systematic}) ahora se muestra como ${common}; el nombre completo se reordenó alfabéticamente.`,
     );
   };
 
@@ -2733,7 +2863,7 @@ export default function Home() {
         : "El nombre del alcano con igual número de carbonos recibe el prefijo ciclo-."
       : hasMultipleBonds
         ? "La cadena principal conserva el mayor número posible de enlaces dobles y triples."
-        : "Los prefijos di-, tri- y tetra- no se consideran al ordenar.";
+        : "Los sustituyentes se ordenan por el nombre mostrado; di-, tri- y tetra- no se consideran al alfabetizar.";
 
   return (
     <main className="app-shell">
@@ -3387,7 +3517,7 @@ export default function Home() {
               </p>
               {showIupacName && hasInteractiveAlkylName && (
                 <small className="alkyl-name-help">
-                  Pulsa el sustituyente destacado para alternar entre el nombre sistemático y el nombre alquilo.
+                  Pulsa el sustituyente destacado para cambiar su forma; el orden alfabético se recalcula automáticamente.
                 </small>
               )}
               {showIupacName && analysis.commonName && (
