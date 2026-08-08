@@ -7,6 +7,7 @@ import { createServer } from "vite";
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 let server;
 let analyzeMolecule;
+let getSingleRingUnsaturationNameOption;
 
 before(async () => {
   server = await createServer({
@@ -17,7 +18,7 @@ before(async () => {
     plugins: [react()],
     server: { middlewareMode: true },
   });
-  ({ analyzeMolecule } = await server.ssrLoadModule("/app/page.tsx"));
+  ({ analyzeMolecule, getSingleRingUnsaturationNameOption } = await server.ssrLoadModule("/app/page.tsx"));
 });
 
 after(async () => {
@@ -90,4 +91,48 @@ test("mantiene alternable un único sustituyente isopropil en un ciclo", () => {
 
   assert.equal(analyzeMolecule(molecule).name, "(1-metiletil)ciclohexano");
   assert.equal(analyzeMolecule(molecule, ["1-metiletil"]).name, "isopropilciclohexano");
+});
+
+function makeUnsaturatedRing(bondOrders) {
+  const atoms = Array.from({ length: 6 }, (_, index) => ({
+    id: index + 1,
+    x: Math.cos((index * Math.PI) / 3),
+    y: Math.sin((index * Math.PI) / 3),
+  }));
+  const bonds = atoms.map((atom, index) => [
+    atom.id,
+    atoms[(index + 1) % atoms.length].id,
+    bondOrders[index] ?? 1,
+  ]);
+  return {
+    atoms,
+    bonds,
+    rings: [{ id: 1, kind: "cycloalkane", atomIds: atoms.map((atom) => atom.id) }],
+  };
+}
+
+test("permite omitir el localizador 1 en un ciclo con un solo doble enlace", () => {
+  const analysis = analyzeMolecule(makeUnsaturatedRing([2, 1, 1, 1, 1, 1]));
+  assert.equal(analysis.chainName, "ciclohex-1-eno");
+  assert.deepEqual(getSingleRingUnsaturationNameOption(analysis), {
+    systematic: "ciclohex-1-eno",
+    simplified: "ciclohexeno",
+    bondKind: "doble",
+  });
+});
+
+test("permite omitir el localizador 1 en un ciclo con un solo triple enlace", () => {
+  const analysis = analyzeMolecule(makeUnsaturatedRing([3, 1, 1, 1, 1, 1]));
+  assert.equal(analysis.chainName, "ciclohex-1-ino");
+  assert.deepEqual(getSingleRingUnsaturationNameOption(analysis), {
+    systematic: "ciclohex-1-ino",
+    simplified: "ciclohexino",
+    bondKind: "triple",
+  });
+});
+
+test("conserva los localizadores cuando el ciclo tiene varias insaturaciones", () => {
+  const analysis = analyzeMolecule(makeUnsaturatedRing([2, 1, 2, 1, 1, 1]));
+  assert.equal(analysis.chainName, "ciclohexa-1,3-dieno");
+  assert.equal(getSingleRingUnsaturationNameOption(analysis), undefined);
 });
