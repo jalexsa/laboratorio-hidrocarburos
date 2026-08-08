@@ -181,9 +181,18 @@ type InteractiveNamePart = {
   systematic?: AlkylAliasKey;
   common?: string;
   active?: boolean;
+  ringSystematic?: string;
+  ringSimplified?: string;
+  ringActive?: boolean;
 };
 
 type AlkylAliasKey = keyof typeof commonAlkylAliases;
+
+type RingUnsaturationNameOption = {
+  systematic: string;
+  simplified: string;
+  bondKind: "doble" | "triple";
+};
 
 const escapeRegularExpression = (value: string) =>
   value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -191,7 +200,15 @@ const escapeRegularExpression = (value: string) =>
 function getInteractiveNameParts(
   name: string,
   enabledAliases: readonly string[],
+  ringOption?: RingUnsaturationNameOption,
+  useSimplifiedRingName = false,
 ): InteractiveNamePart[] {
+  const ringTarget = ringOption
+    ? useSimplifiedRingName ? ringOption.simplified : ringOption.systematic
+    : undefined;
+  const displayName = ringOption && ringTarget
+    ? name.replace(ringOption.systematic, ringTarget)
+    : name;
   const enabled = new Set(enabledAliases);
   const parts: InteractiveNamePart[] = [];
   const simpleMultipliers = simplePrefixes.slice(2).filter(Boolean).join("|");
@@ -199,7 +216,7 @@ function getInteractiveNameParts(
   const aliases = Object.entries(commonAlkylAliases) as [AlkylAliasKey, string][];
   let cursor = 0;
 
-  while (cursor < name.length) {
+  while (cursor < displayName.length) {
     let nextMatch:
       | {
           index: number;
@@ -215,7 +232,7 @@ function getInteractiveNameParts(
       const source = active
         ? `(?:${simpleMultipliers})?${escapeRegularExpression(common)}`
         : `(?:${complexMultipliers})?\\(${escapeRegularExpression(systematic)}\\)`;
-      const match = new RegExp(source).exec(name.slice(cursor));
+      const match = new RegExp(source).exec(displayName.slice(cursor));
       if (!match) return;
       const candidate = {
         index: cursor + match.index,
@@ -234,12 +251,12 @@ function getInteractiveNameParts(
     });
 
     if (!nextMatch) {
-      parts.push({ text: name.slice(cursor) });
+      parts.push({ text: displayName.slice(cursor) });
       break;
     }
 
     if (nextMatch.index > cursor) {
-      parts.push({ text: name.slice(cursor, nextMatch.index) });
+      parts.push({ text: displayName.slice(cursor, nextMatch.index) });
     }
     parts.push({
       text: nextMatch.text,
@@ -250,7 +267,26 @@ function getInteractiveNameParts(
     cursor = nextMatch.index + nextMatch.text.length;
   }
 
-  return parts.length ? parts : [{ text: name }];
+  const alkylParts = parts.length ? parts : [{ text: displayName }];
+  if (!ringOption || !ringTarget) return alkylParts;
+
+  return alkylParts.flatMap((part) => {
+    if (part.systematic) return [part];
+    const ringIndex = part.text.indexOf(ringTarget);
+    if (ringIndex < 0) return [part];
+    return [
+      ...(ringIndex > 0 ? [{ text: part.text.slice(0, ringIndex) }] : []),
+      {
+        text: ringTarget,
+        ringSystematic: ringOption.systematic,
+        ringSimplified: ringOption.simplified,
+        ringActive: useSimplifiedRingName,
+      },
+      ...(ringIndex + ringTarget.length < part.text.length
+        ? [{ text: part.text.slice(ringIndex + ringTarget.length) }]
+        : []),
+    ];
+  });
 }
 
 const subscriptDigits: Record<string, string> = {
@@ -1220,6 +1256,32 @@ function unsaturatedRingBaseName(
     doubleBondLocants,
     tripleBondLocants,
   )}`;
+}
+
+export function getSingleRingUnsaturationNameOption(
+  analysis: Analysis,
+): RingUnsaturationNameOption | undefined {
+  if (
+    analysis.family !== "cycloalkane"
+    || analysis.functionalGroups.length > 0
+    || analysis.primaryFunctionalGroup
+  ) {
+    return undefined;
+  }
+
+  const hasSingleDouble = analysis.doubleBondLocants.length === 1
+    && analysis.tripleBondLocants.length === 0;
+  const hasSingleTriple = analysis.tripleBondLocants.length === 1
+    && analysis.doubleBondLocants.length === 0;
+  if (!hasSingleDouble && !hasSingleTriple) return undefined;
+
+  const suffix = hasSingleDouble ? "-1-eno" : "-1-ino";
+  if (!analysis.chainName.endsWith(suffix)) return undefined;
+  return {
+    systematic: analysis.chainName,
+    simplified: `${analysis.chainName.slice(0, -suffix.length)}${hasSingleDouble ? "eno" : "ino"}`,
+    bondKind: hasSingleDouble ? "doble" : "triple",
+  };
 }
 
 function ringSubstituentName(ring: RingInfo) {
@@ -2278,6 +2340,7 @@ export default function Home() {
   const [showFunctionalPalette, setShowFunctionalPalette] = useState(false);
   const [ringInsertMode, setRingInsertMode] = useState<RingInsertMode>("replace");
   const [commonAlkylNameSelections, setCommonAlkylNameSelections] = useState<string[]>([]);
+  const [useSimplifiedRingUnsaturationName, setUseSimplifiedRingUnsaturationName] = useState(false);
   const [themePreference, setThemePreference] = useState<ThemePreference>("auto");
   const [automaticDark, setAutomaticDark] = useState(false);
   const [showCreatorCredit, setShowCreatorCredit] = useState(false);
@@ -2290,12 +2353,27 @@ export default function Home() {
   );
   const selectedAtom = molecule.atoms.find((atom) => atom.id === selectedId) ?? molecule.atoms[0];
   const mainChainSet = useMemo(() => new Set(analysis.mainChain), [analysis.mainChain]);
+  const ringUnsaturationNameOption = useMemo(
+    () => getSingleRingUnsaturationNameOption(analysis),
+    [analysis],
+  );
   const interactiveNameParts = useMemo(
-    () => getInteractiveNameParts(analysis.name, commonAlkylNameSelections),
-    [analysis.name, commonAlkylNameSelections],
+    () => getInteractiveNameParts(
+      analysis.name,
+      commonAlkylNameSelections,
+      ringUnsaturationNameOption,
+      useSimplifiedRingUnsaturationName,
+    ),
+    [
+      analysis.name,
+      commonAlkylNameSelections,
+      ringUnsaturationNameOption,
+      useSimplifiedRingUnsaturationName,
+    ],
   );
   const displayedIupacName = interactiveNameParts.map((part) => part.text).join("");
   const hasInteractiveAlkylName = interactiveNameParts.some((part) => part.systematic);
+  const hasInteractiveRingName = interactiveNameParts.some((part) => part.ringSystematic);
   const isDarkTheme = themePreference === "dark" || (themePreference === "auto" && automaticDark);
 
   useEffect(() => {
@@ -2362,6 +2440,15 @@ export default function Home() {
       currentlyActive
         ? `${common} volvió a mostrarse como (${systematic}) y se recalculó el orden alfabético.`
         : `(${systematic}) ahora se muestra como ${common}; el nombre completo se reordenó alfabéticamente.`,
+    );
+  };
+
+  const toggleRingUnsaturationName = (option: RingUnsaturationNameOption) => {
+    setUseSimplifiedRingUnsaturationName((current) => !current);
+    setNotice(
+      useSimplifiedRingUnsaturationName
+        ? `${option.simplified} volvió a mostrarse como ${option.systematic}.`
+        : `${option.systematic} ahora se muestra como ${option.simplified}; en un ciclo con una sola insaturación, el localizador 1 puede omitirse.`,
     );
   };
 
@@ -3036,13 +3123,14 @@ export default function Home() {
                   ? showHydrogens
                     ? hydrogenCount === 0
                       ? "C"
-                      : hydrogenCount === 1
-                        ? "CH"
-                        : `CH${toSubscript(hydrogenCount)}`
+                      : "CH"
                     : "C"
                   : showHydrogens && hydrogenCount
-                    ? `${element}H${hydrogenCount > 1 ? toSubscript(hydrogenCount) : ""}`
+                    ? `${element}H`
                     : element;
+                const hydrogenSubscript = showHydrogens && hydrogenCount > 1
+                  ? hydrogenCount
+                  : undefined;
                 return (
                   <g
                     key={atom.id}
@@ -3067,7 +3155,10 @@ export default function Home() {
                         {carbonCount === 1 && molecule.atoms.length === 1 && (
                           <g className="methane-marker">
                             <circle r="28" />
-                            <text textAnchor="middle" dominantBaseline="central">CH₄</text>
+                            <text textAnchor="middle" dominantBaseline="central">
+                              <tspan>CH</tspan>
+                              <tspan className="hydrogen-subscript" baselineShift="sub">4</tspan>
+                            </text>
                           </g>
                         )}
                         {showNumbering && chainNumber && carbonCount > 1 && (
@@ -3081,7 +3172,14 @@ export default function Home() {
                       <>
                         {isSelected && <circle className="selection-ring" r="39" />}
                         <circle className="atom-circle" r="28" />
-                        <text className="atom-label" textAnchor="middle" dominantBaseline="central">{atomLabel}</text>
+                        <text className="atom-label" textAnchor="middle" dominantBaseline="central">
+                          <tspan>{atomLabel}</tspan>
+                          {hydrogenSubscript && (
+                            <tspan className="hydrogen-subscript" baselineShift="sub">
+                              {hydrogenSubscript}
+                            </tspan>
+                          )}
+                        </text>
                         {showNumbering && chainNumber && (
                           <g transform="translate(25 -27)">
                             <circle className="number-circle" r="12" />
@@ -3509,15 +3607,35 @@ export default function Home() {
                         >
                           {part.text}
                         </button>
+                      ) : part.ringSystematic && part.ringSimplified && ringUnsaturationNameOption ? (
+                        <button
+                          className={`alkyl-name-toggle ring-name-toggle ${part.ringActive ? "common-active" : ""}`}
+                          key={`ring-name-${index}`}
+                          type="button"
+                          aria-pressed={Boolean(part.ringActive)}
+                          aria-label={part.ringActive
+                            ? `Volver de ${part.ringSimplified} a ${part.ringSystematic}`
+                            : `Cambiar ${part.ringSystematic} a ${part.ringSimplified}`}
+                          title={part.ringActive
+                            ? `Mostrar ${part.ringSystematic}`
+                            : `Omitir el localizador 1: ${part.ringSimplified}`}
+                          onClick={() => toggleRingUnsaturationName(ringUnsaturationNameOption)}
+                        >
+                          {part.text}
+                        </button>
                       ) : (
                         <span key={`name-part-${index}`}>{part.text}</span>
                       ),
                     )
                   : "Respuesta oculta"}
               </p>
-              {showIupacName && hasInteractiveAlkylName && (
+              {showIupacName && (hasInteractiveAlkylName || hasInteractiveRingName) && (
                 <small className="alkyl-name-help">
-                  Pulsa el sustituyente destacado para cambiar su forma; el orden alfabético se recalcula automáticamente.
+                  {hasInteractiveAlkylName && hasInteractiveRingName
+                    ? "Pulsa cada fragmento destacado para alternar su forma de nomenclatura."
+                    : hasInteractiveRingName
+                      ? "Pulsa el nombre del ciclo para mostrar u omitir el localizador 1."
+                      : "Pulsa el sustituyente destacado para cambiar su forma; el orden alfabético se recalcula automáticamente."}
                 </small>
               )}
               {showIupacName && analysis.commonName && (
