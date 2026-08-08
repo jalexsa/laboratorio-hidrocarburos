@@ -6,7 +6,10 @@ type CarbonAtom = {
   id: number;
   x: number;
   y: number;
+  element?: ChemicalElement;
 };
+
+type ChemicalElement = "C" | "O" | "N" | "F" | "Cl" | "Br" | "I";
 
 type BondOrder = 1 | 2 | 3;
 
@@ -29,6 +32,40 @@ type Molecule = {
 type ViewMode = "condensed" | "skeletal";
 type ThemePreference = "auto" | "light" | "dark";
 type RingInsertMode = "replace" | "attach";
+
+type FunctionalGroupKind =
+  | "halogen"
+  | "alcohol"
+  | "ether"
+  | "aldehyde"
+  | "ketone"
+  | "carboxylicAcid"
+  | "ester"
+  | "amine"
+  | "amide";
+
+type FunctionalGroup = {
+  id: string;
+  kind: FunctionalGroupKind;
+  label: string;
+  atomIds: number[];
+  carbonIds: number[];
+  carbonId: number;
+  heteroAtomId: number;
+  alkylCarbonId?: number;
+};
+
+type FunctionalGroupTemplate = {
+  id: string;
+  label: string;
+  shortFormula: string;
+  category: "oxygen" | "nitrogen" | "halogen";
+  detail: string;
+  kind: FunctionalGroupKind;
+  atoms: { element: ChemicalElement; x: number; y: number }[];
+  bonds: [number, number, BondOrder][];
+  requirement: "open" | "terminal-carbon" | "internal-carbon";
+};
 
 type AlkylTemplate = {
   id: string;
@@ -68,6 +105,9 @@ type Analysis = {
   numberedAtoms: Map<number, number>;
   doubleBondLocants: number[];
   tripleBondLocants: number[];
+  functionalGroups: FunctionalGroup[];
+  primaryFunctionalGroup?: FunctionalGroupKind;
+  primaryFunctionalLabel?: string;
 };
 
 const alkaneRoots = [
@@ -206,11 +246,46 @@ const getBondOrderLabel = (order: BondOrder) =>
 
 const bondKey = (a: number, b: number) => (a < b ? `${a}-${b}` : `${b}-${a}`);
 
+const getElement = (atom: CarbonAtom): ChemicalElement => atom.element ?? "C";
+
+const elementValences: Record<ChemicalElement, number> = {
+  C: 4,
+  O: 2,
+  N: 3,
+  F: 1,
+  Cl: 1,
+  Br: 1,
+  I: 1,
+};
+
+const elementNames: Record<ChemicalElement, string> = {
+  C: "carbono",
+  O: "oxígeno",
+  N: "nitrógeno",
+  F: "flúor",
+  Cl: "cloro",
+  Br: "bromo",
+  I: "yodo",
+};
+
+const getAtom = (atomId: number, molecule: Molecule) =>
+  molecule.atoms.find((atom) => atom.id === atomId);
+
+const getValenceLimit = (atomId: number, molecule: Molecule) => {
+  const atom = getAtom(atomId, molecule);
+  return atom ? elementValences[getElement(atom)] : 0;
+};
+
 const getValenceUsed = (atomId: number, molecule: Molecule) =>
   molecule.bonds.reduce(
     (total, bond) => total + (bond[0] === atomId || bond[1] === atomId ? getBondOrder(bond) : 0),
     0,
   );
+
+const getImplicitHydrogens = (atomId: number, molecule: Molecule) =>
+  Math.max(0, getValenceLimit(atomId, molecule) - getValenceUsed(atomId, molecule));
+
+const isCarbonAtom = (atom: CarbonAtom) => getElement(atom) === "C";
 
 const makeChain = (length: number): Molecule => ({
   atoms: Array.from({ length }, (_, index) => ({ id: index + 1, x: index, y: 0 })),
@@ -448,6 +523,145 @@ const AROMATIC_TEMPLATES: RingTemplate[] = [
   },
 ];
 
+const functionalGroupLabels: Record<FunctionalGroupKind, string> = {
+  halogen: "Halogenuro",
+  alcohol: "Alcohol",
+  ether: "Éter",
+  aldehyde: "Aldehído",
+  ketone: "Cetona",
+  carboxylicAcid: "Ácido carboxílico",
+  ester: "Éster",
+  amine: "Amina",
+  amide: "Amida",
+};
+
+const functionalGroupPriority: Record<FunctionalGroupKind, number> = {
+  carboxylicAcid: 9,
+  ester: 8,
+  amide: 7,
+  aldehyde: 6,
+  ketone: 5,
+  alcohol: 4,
+  amine: 3,
+  ether: 1,
+  halogen: 1,
+};
+
+const FUNCTIONAL_GROUP_TEMPLATES: FunctionalGroupTemplate[] = [
+  {
+    id: "hydroxyl",
+    label: "Alcohol",
+    shortFormula: "–OH",
+    category: "oxygen",
+    detail: "grupo hidroxilo",
+    kind: "alcohol",
+    atoms: [{ element: "O", x: 1, y: 0 }],
+    bonds: [[0, 1, 1]],
+    requirement: "open",
+  },
+  {
+    id: "ether-methyl",
+    label: "Éter",
+    shortFormula: "–O–CH₃",
+    category: "oxygen",
+    detail: "grupo metoxi",
+    kind: "ether",
+    atoms: [
+      { element: "O", x: 1, y: 0 },
+      { element: "C", x: 2, y: 0 },
+    ],
+    bonds: [[0, 1, 1], [1, 2, 1]],
+    requirement: "open",
+  },
+  {
+    id: "aldehyde",
+    label: "Aldehído",
+    shortFormula: "–CHO",
+    category: "oxygen",
+    detail: "carbonilo terminal",
+    kind: "aldehyde",
+    atoms: [{ element: "O", x: 1, y: 0 }],
+    bonds: [[0, 1, 2]],
+    requirement: "terminal-carbon",
+  },
+  {
+    id: "ketone",
+    label: "Cetona",
+    shortFormula: ">C=O",
+    category: "oxygen",
+    detail: "carbonilo interno",
+    kind: "ketone",
+    atoms: [{ element: "O", x: 0, y: -1 }],
+    bonds: [[0, 1, 2]],
+    requirement: "internal-carbon",
+  },
+  {
+    id: "carboxylic-acid",
+    label: "Ácido carboxílico",
+    shortFormula: "–COOH",
+    category: "oxygen",
+    detail: "carboxilo terminal",
+    kind: "carboxylicAcid",
+    atoms: [
+      { element: "O", x: 0, y: -1 },
+      { element: "O", x: 1, y: 0 },
+    ],
+    bonds: [[0, 1, 2], [0, 2, 1]],
+    requirement: "terminal-carbon",
+  },
+  {
+    id: "methyl-ester",
+    label: "Éster metílico",
+    shortFormula: "–COOCH₃",
+    category: "oxygen",
+    detail: "éster con metilo",
+    kind: "ester",
+    atoms: [
+      { element: "O", x: 0, y: -1 },
+      { element: "O", x: 1, y: 0 },
+      { element: "C", x: 2, y: 0 },
+    ],
+    bonds: [[0, 1, 2], [0, 2, 1], [2, 3, 1]],
+    requirement: "terminal-carbon",
+  },
+  {
+    id: "amine",
+    label: "Amina",
+    shortFormula: "–NH₂",
+    category: "nitrogen",
+    detail: "amina primaria",
+    kind: "amine",
+    atoms: [{ element: "N", x: 1, y: 0 }],
+    bonds: [[0, 1, 1]],
+    requirement: "open",
+  },
+  {
+    id: "amide",
+    label: "Amida",
+    shortFormula: "–CONH₂",
+    category: "nitrogen",
+    detail: "carbonilo con amino",
+    kind: "amide",
+    atoms: [
+      { element: "O", x: 0, y: -1 },
+      { element: "N", x: 1, y: 0 },
+    ],
+    bonds: [[0, 1, 2], [0, 2, 1]],
+    requirement: "terminal-carbon",
+  },
+  ...(["F", "Cl", "Br", "I"] as ChemicalElement[]).map((element) => ({
+    id: `halo-${element.toLowerCase()}`,
+    label: element === "F" ? "Fluoro" : element === "Cl" ? "Cloro" : element === "Br" ? "Bromo" : "Yodo",
+    shortFormula: `–${element}`,
+    category: "halogen" as const,
+    detail: "sustituyente halógeno",
+    kind: "halogen" as const,
+    atoms: [{ element, x: 1, y: 0 }],
+    bonds: [[0, 1, 1] as [number, number, BondOrder]],
+    requirement: "open" as const,
+  })),
+];
+
 const PRESETS: { label: string; molecule: Molecule }[] = [
   { label: "Butano", molecule: makeChain(4) },
   {
@@ -561,6 +775,111 @@ const PRESETS: { label: string; molecule: Molecule }[] = [
   },
   { label: "Bifenilo", molecule: makeLinkedRings("aromatic", "aromatic") },
   { label: "Ciclohexilciclohexano", molecule: makeLinkedRings("cycloalkane", "cycloalkane") },
+  {
+    label: "Etanol",
+    molecule: {
+      atoms: [
+        { id: 1, x: 0, y: 0 },
+        { id: 2, x: 1, y: 0 },
+        { id: 3, x: 2, y: 0, element: "O" },
+      ],
+      bonds: [[1, 2], [2, 3]],
+    },
+  },
+  {
+    label: "Metoxietano",
+    molecule: {
+      atoms: [
+        { id: 1, x: 0, y: 0 },
+        { id: 2, x: 1, y: 0 },
+        { id: 3, x: 2, y: 0, element: "O" },
+        { id: 4, x: 3, y: 0 },
+      ],
+      bonds: [[1, 2], [2, 3], [3, 4]],
+    },
+  },
+  {
+    label: "Etanal",
+    molecule: {
+      atoms: [
+        { id: 1, x: 0, y: 0 },
+        { id: 2, x: 1, y: 0 },
+        { id: 3, x: 1, y: -1, element: "O" },
+      ],
+      bonds: [[1, 2], [2, 3, 2]],
+    },
+  },
+  {
+    label: "Propan-2-ona",
+    molecule: {
+      atoms: [
+        { id: 1, x: 0, y: 0 },
+        { id: 2, x: 1, y: 0 },
+        { id: 3, x: 2, y: 0 },
+        { id: 4, x: 1, y: -1, element: "O" },
+      ],
+      bonds: [[1, 2], [2, 3], [2, 4, 2]],
+    },
+  },
+  {
+    label: "Ácido etanoico",
+    molecule: {
+      atoms: [
+        { id: 1, x: 0, y: 0 },
+        { id: 2, x: 1, y: 0 },
+        { id: 3, x: 1, y: -1, element: "O" },
+        { id: 4, x: 2, y: 0, element: "O" },
+      ],
+      bonds: [[1, 2], [2, 3, 2], [2, 4]],
+    },
+  },
+  {
+    label: "Etanoato de metilo",
+    molecule: {
+      atoms: [
+        { id: 1, x: 0, y: 0 },
+        { id: 2, x: 1, y: 0 },
+        { id: 3, x: 1, y: -1, element: "O" },
+        { id: 4, x: 2, y: 0, element: "O" },
+        { id: 5, x: 3, y: 0 },
+      ],
+      bonds: [[1, 2], [2, 3, 2], [2, 4], [4, 5]],
+    },
+  },
+  {
+    label: "Etanamina",
+    molecule: {
+      atoms: [
+        { id: 1, x: 0, y: 0 },
+        { id: 2, x: 1, y: 0 },
+        { id: 3, x: 2, y: 0, element: "N" },
+      ],
+      bonds: [[1, 2], [2, 3]],
+    },
+  },
+  {
+    label: "Etanamida",
+    molecule: {
+      atoms: [
+        { id: 1, x: 0, y: 0 },
+        { id: 2, x: 1, y: 0 },
+        { id: 3, x: 1, y: -1, element: "O" },
+        { id: 4, x: 2, y: 0, element: "N" },
+      ],
+      bonds: [[1, 2], [2, 3, 2], [2, 4]],
+    },
+  },
+  {
+    label: "Cloroetano",
+    molecule: {
+      atoms: [
+        { id: 1, x: 0, y: 0 },
+        { id: 2, x: 1, y: 0 },
+        { id: 3, x: 2, y: 0, element: "Cl" },
+      ],
+      bonds: [[1, 2], [2, 3]],
+    },
+  },
 ];
 
 function cloneMolecule(molecule: Molecule): Molecule {
@@ -597,6 +916,8 @@ function pathBetween(start: number, end: number, adjacency: Map<number, number[]
       }
     }
   }
+
+  if (!previous.has(end)) return [];
 
   const path: number[] = [];
   let cursor: number | null | undefined = end;
@@ -743,12 +1064,32 @@ function makeChainName(length: number, doubleLocants: number[], tripleLocants: n
 }
 
 function molecularFormula(molecule: Molecule) {
-  const carbonCount = molecule.atoms.length;
+  const counts = new Map<ChemicalElement, number>();
+  molecule.atoms.forEach((atom) => {
+    const element = getElement(atom);
+    counts.set(element, (counts.get(element) ?? 0) + 1);
+  });
   const hydrogenCount = molecule.atoms.reduce(
-    (total, atom) => total + Math.max(0, 4 - getValenceUsed(atom.id, molecule)),
+    (total, atom) => total + getImplicitHydrogens(atom.id, molecule),
     0,
   );
-  return `C${toSubscript(carbonCount)}H${toSubscript(hydrogenCount)}`;
+
+  const formatCount = (element: ChemicalElement, alwaysShowCount = false) => {
+    const count = counts.get(element) ?? 0;
+    if (!count) return "";
+    return `${element}${count > 1 || alwaysShowCount ? toSubscript(count) : ""}`;
+  };
+
+  return [
+    formatCount("C", true),
+    hydrogenCount ? `H${toSubscript(hydrogenCount)}` : "",
+    formatCount("Br"),
+    formatCount("Cl"),
+    formatCount("F"),
+    formatCount("I"),
+    formatCount("N"),
+    formatCount("O"),
+  ].filter(Boolean).join("");
 }
 
 function aromaticCommonName(substituents: NamedSubstituent[]) {
@@ -935,6 +1276,7 @@ function buildRingAnalysis(
     numberedAtoms: new Map(chosen.path.map((atomId, index) => [atomId, index + 1])),
     doubleBondLocants: chosen.doubleBondLocants,
     tripleBondLocants: chosen.tripleBondLocants,
+    functionalGroups: [],
   };
 }
 
@@ -967,7 +1309,7 @@ function analyzeMultiRingMolecule(molecule: Molecule): Analysis {
   return buildRingAnalysis(molecule, ranked[0], "polycyclic");
 }
 
-function analyzeMolecule(molecule: Molecule): Analysis {
+function analyzeHydrocarbonMolecule(molecule: Molecule): Analysis {
   if ((molecule.rings?.length ?? 0) > 1) return analyzeMultiRingMolecule(molecule);
   if (molecule.rings?.length === 1) return analyzeRingMolecule(molecule);
 
@@ -1065,7 +1407,634 @@ function analyzeMolecule(molecule: Molecule): Analysis {
     numberedAtoms,
     doubleBondLocants: chosen.doubleBondLocants,
     tripleBondLocants: chosen.tripleBondLocants,
+    functionalGroups: [],
   };
+}
+
+function carbonSkeleton(molecule: Molecule): Molecule {
+  const carbonIds = new Set(
+    molecule.atoms.filter(isCarbonAtom).map((atom) => atom.id),
+  );
+  return {
+    atoms: molecule.atoms.filter(isCarbonAtom).map((atom) => ({ ...atom, element: "C" })),
+    bonds: molecule.bonds
+      .filter(([a, b]) => carbonIds.has(a) && carbonIds.has(b))
+      .map((bond) => [...bond] as Bond),
+    rings: molecule.rings?.map((ring) => ({ ...ring, atomIds: [...ring.atomIds] })),
+  };
+}
+
+function atomNeighbors(atomId: number, molecule: Molecule) {
+  return molecule.bonds.flatMap((bond) => {
+    if (bond[0] === atomId) return [{ atomId: bond[1], order: getBondOrder(bond) }];
+    if (bond[1] === atomId) return [{ atomId: bond[0], order: getBondOrder(bond) }];
+    return [];
+  });
+}
+
+function detectFunctionalGroups(molecule: Molecule): FunctionalGroup[] {
+  const groups: FunctionalGroup[] = [];
+  const claimedHeteroAtoms = new Set<number>();
+  const atomsById = new Map(molecule.atoms.map((atom) => [atom.id, atom]));
+  const elementAt = (atomId: number) => {
+    const atom = atomsById.get(atomId);
+    return atom ? getElement(atom) : "C";
+  };
+
+  molecule.atoms.filter(isCarbonAtom).forEach((carbon) => {
+    const neighbors = atomNeighbors(carbon.id, molecule);
+    const doubleOxygen = neighbors.find(
+      (neighbor) => elementAt(neighbor.atomId) === "O" && neighbor.order === 2,
+    );
+    if (!doubleOxygen) return;
+
+    const singleOxygen = neighbors.find(
+      (neighbor) => elementAt(neighbor.atomId) === "O" && neighbor.order === 1,
+    );
+    const singleNitrogen = neighbors.find(
+      (neighbor) => elementAt(neighbor.atomId) === "N" && neighbor.order === 1,
+    );
+
+    if (singleOxygen) {
+      const oxygenCarbonNeighbors = atomNeighbors(singleOxygen.atomId, molecule)
+        .filter((neighbor) => neighbor.atomId !== carbon.id && elementAt(neighbor.atomId) === "C");
+      const alkylCarbonId = oxygenCarbonNeighbors[0]?.atomId;
+      const kind: FunctionalGroupKind = alkylCarbonId ? "ester" : "carboxylicAcid";
+      groups.push({
+        id: `${kind}-${carbon.id}`,
+        kind,
+        label: functionalGroupLabels[kind],
+        atomIds: [
+          carbon.id,
+          doubleOxygen.atomId,
+          singleOxygen.atomId,
+          ...(alkylCarbonId ? [alkylCarbonId] : []),
+        ],
+        carbonIds: [carbon.id],
+        carbonId: carbon.id,
+        heteroAtomId: doubleOxygen.atomId,
+        alkylCarbonId,
+      });
+      claimedHeteroAtoms.add(doubleOxygen.atomId);
+      claimedHeteroAtoms.add(singleOxygen.atomId);
+      return;
+    }
+
+    if (singleNitrogen) {
+      groups.push({
+        id: `amide-${carbon.id}`,
+        kind: "amide",
+        label: functionalGroupLabels.amide,
+        atomIds: [carbon.id, doubleOxygen.atomId, singleNitrogen.atomId],
+        carbonIds: [carbon.id],
+        carbonId: carbon.id,
+        heteroAtomId: singleNitrogen.atomId,
+      });
+      claimedHeteroAtoms.add(doubleOxygen.atomId);
+      claimedHeteroAtoms.add(singleNitrogen.atomId);
+      return;
+    }
+
+    const kind: FunctionalGroupKind = getImplicitHydrogens(carbon.id, molecule) > 0
+      ? "aldehyde"
+      : "ketone";
+    groups.push({
+      id: `${kind}-${carbon.id}`,
+      kind,
+      label: functionalGroupLabels[kind],
+      atomIds: [carbon.id, doubleOxygen.atomId],
+      carbonIds: [carbon.id],
+      carbonId: carbon.id,
+      heteroAtomId: doubleOxygen.atomId,
+    });
+    claimedHeteroAtoms.add(doubleOxygen.atomId);
+  });
+
+  molecule.atoms.forEach((atom) => {
+    const element = getElement(atom);
+    if (element !== "O" || claimedHeteroAtoms.has(atom.id)) return;
+    const carbonNeighbors = atomNeighbors(atom.id, molecule)
+      .filter((neighbor) => neighbor.order === 1 && elementAt(neighbor.atomId) === "C")
+      .map((neighbor) => neighbor.atomId);
+    if (carbonNeighbors.length === 1 && getValenceUsed(atom.id, molecule) === 1) {
+      groups.push({
+        id: `alcohol-${atom.id}`,
+        kind: "alcohol",
+        label: functionalGroupLabels.alcohol,
+        atomIds: [carbonNeighbors[0], atom.id],
+        carbonIds: [carbonNeighbors[0]],
+        carbonId: carbonNeighbors[0],
+        heteroAtomId: atom.id,
+      });
+      claimedHeteroAtoms.add(atom.id);
+    } else if (carbonNeighbors.length === 2 && getValenceUsed(atom.id, molecule) === 2) {
+      groups.push({
+        id: `ether-${atom.id}`,
+        kind: "ether",
+        label: functionalGroupLabels.ether,
+        atomIds: [atom.id, ...carbonNeighbors],
+        carbonIds: carbonNeighbors,
+        carbonId: carbonNeighbors[0],
+        heteroAtomId: atom.id,
+        alkylCarbonId: carbonNeighbors[1],
+      });
+      claimedHeteroAtoms.add(atom.id);
+    }
+  });
+
+  molecule.atoms.forEach((atom) => {
+    const element = getElement(atom);
+    if (element !== "N" || claimedHeteroAtoms.has(atom.id)) return;
+    const carbonNeighbors = atomNeighbors(atom.id, molecule)
+      .filter((neighbor) => neighbor.order === 1 && elementAt(neighbor.atomId) === "C")
+      .map((neighbor) => neighbor.atomId);
+    if (!carbonNeighbors.length) return;
+    groups.push({
+      id: `amine-${atom.id}`,
+      kind: "amine",
+      label: functionalGroupLabels.amine,
+      atomIds: [atom.id, ...carbonNeighbors],
+      carbonIds: carbonNeighbors,
+      carbonId: carbonNeighbors[0],
+      heteroAtomId: atom.id,
+    });
+    claimedHeteroAtoms.add(atom.id);
+  });
+
+  molecule.atoms.forEach((atom) => {
+    const element = getElement(atom);
+    if (!(element === "F" || element === "Cl" || element === "Br" || element === "I")) return;
+    const carbonNeighbor = atomNeighbors(atom.id, molecule)
+      .find((neighbor) => elementAt(neighbor.atomId) === "C");
+    if (!carbonNeighbor) return;
+    const label = element === "F" ? "Fluoro" : element === "Cl" ? "Cloro" : element === "Br" ? "Bromo" : "Yodo";
+    groups.push({
+      id: `halogen-${atom.id}`,
+      kind: "halogen",
+      label,
+      atomIds: [carbonNeighbor.atomId, atom.id],
+      carbonIds: [carbonNeighbor.atomId],
+      carbonId: carbonNeighbor.atomId,
+      heteroAtomId: atom.id,
+    });
+  });
+
+  return groups;
+}
+
+const suffixFunctionalGroups = new Set<FunctionalGroupKind>([
+  "carboxylicAcid",
+  "ester",
+  "amide",
+  "aldehyde",
+  "ketone",
+  "alcohol",
+  "amine",
+]);
+
+function selectPrimaryFunctionalGroup(groups: FunctionalGroup[]) {
+  return [...groups]
+    .filter((group) => suffixFunctionalGroups.has(group.kind))
+    .sort((left, right) => functionalGroupPriority[right.kind] - functionalGroupPriority[left.kind])[0]?.kind;
+}
+
+function carbonComponent(startId: number, skeleton: Molecule) {
+  const adjacency = buildAdjacency(skeleton);
+  const seen = new Set<number>();
+  const stack = [startId];
+  while (stack.length) {
+    const current = stack.pop()!;
+    if (seen.has(current)) continue;
+    seen.add(current);
+    (adjacency.get(current) ?? []).forEach((neighbor) => stack.push(neighbor));
+  }
+  return [...seen];
+}
+
+function simpleAlkylLength(startId: number, skeleton: Molecule) {
+  const component = carbonComponent(startId, skeleton);
+  const adjacency = buildAdjacency(skeleton);
+  const simple = component.every(
+    (atomId) => (adjacency.get(atomId) ?? []).filter((neighbor) => component.includes(neighbor)).length <= 2,
+  );
+  return simple ? component.length : 0;
+}
+
+function alkoxyName(startId: number, skeleton: Molecule) {
+  const length = simpleAlkylLength(startId, skeleton);
+  return length && alkaneRoots[length] ? `${alkaneRoots[length]}oxi` : "alcoxi";
+}
+
+function esterAlkylName(startId: number | undefined, skeleton: Molecule) {
+  if (!startId) return "alquilo";
+  const length = simpleAlkylLength(startId, skeleton);
+  const name = alkylNames[length];
+  return name ? `${name}o` : "alquilo";
+}
+
+function locantForGroup(group: FunctionalGroup, path: number[]) {
+  const carbonId = group.carbonIds.find((candidate) => path.includes(candidate));
+  return carbonId ? path.indexOf(carbonId) + 1 : undefined;
+}
+
+function functionalPrefixSubstituents(
+  groups: FunctionalGroup[],
+  path: number[],
+  primaryKind: FunctionalGroupKind | undefined,
+  molecule: Molecule,
+  skeleton: Molecule,
+): NamedSubstituent[] {
+  const prefixes: NamedSubstituent[] = [];
+  groups.forEach((group) => {
+    const locant = locantForGroup(group, path);
+    if (!locant) return;
+    let name: string | undefined;
+    if (group.kind === "halogen") {
+      const element = getElement(getAtom(group.heteroAtomId, molecule)!);
+      name = element === "F" ? "fluoro" : element === "Cl" ? "cloro" : element === "Br" ? "bromo" : "yodo";
+    } else if (group.kind === "ether") {
+      const parentCarbonId = group.carbonIds.find((candidate) => path.includes(candidate));
+      const otherCarbonId = group.carbonIds.find((candidate) => candidate !== parentCarbonId);
+      if (otherCarbonId) name = alkoxyName(otherCarbonId, skeleton);
+    } else if (group.kind !== primaryKind) {
+      name = group.kind === "alcohol"
+        ? "hidroxi"
+        : group.kind === "ketone"
+          ? "oxo"
+          : group.kind === "amine"
+            ? "amino"
+            : group.kind === "aldehyde"
+              ? "formil"
+              : undefined;
+    }
+    if (!name) return;
+    prefixes.push({
+      locant,
+      name,
+      sortName: stripForAlphabetizing(name),
+      complex: false,
+      atomIds: group.atomIds,
+    });
+  });
+  return prefixes;
+}
+
+function makeFunctionalParentName(
+  length: number,
+  doubleLocants: number[],
+  tripleLocants: number[],
+  kind: FunctionalGroupKind,
+  locants: number[],
+  esterAlkyl?: string,
+) {
+  const hydrocarbonName = makeChainName(length, doubleLocants, tripleLocants);
+  const stem = hydrocarbonName.endsWith("o") ? hydrocarbonName.slice(0, -1) : hydrocarbonName;
+  const sortedLocants = [...locants].sort((a, b) => a - b);
+  const locantText = sortedLocants.join(",");
+
+  if (kind === "carboxylicAcid") return `ácido ${stem}oico`;
+  if (kind === "ester") return `${stem}oato de ${esterAlkyl ?? "alquilo"}`;
+  if (kind === "amide") return `${stem}amida`;
+  if (kind === "aldehyde") return `${stem}al`;
+
+  if (sortedLocants.length > 1) {
+    const prefix = simplePrefixes[sortedLocants.length] ?? `${sortedLocants.length}`;
+    if (kind === "alcohol") return `${hydrocarbonName}-${locantText}-${prefix}ol`;
+    if (kind === "ketone") return `${hydrocarbonName}-${locantText}-${prefix}ona`;
+    if (kind === "amine") return `${hydrocarbonName}-${locantText}-${prefix}amina`;
+  }
+
+  const locant = sortedLocants[0] ?? 1;
+  if (kind === "alcohol") {
+    if (!doubleLocants.length && !tripleLocants.length && length <= 2) return `${stem}ol`;
+    return `${stem}-${locant}-ol`;
+  }
+  if (kind === "ketone") return `${stem}-${locant}-ona`;
+  if (kind === "amine") {
+    if (!doubleLocants.length && !tripleLocants.length && length <= 2) return `${stem}amina`;
+    return `${stem}-${locant}-amina`;
+  }
+  return hydrocarbonName;
+}
+
+function combinePrefixAndParent(prefixParts: string[], parentName: string) {
+  if (!prefixParts.length) return parentName;
+  const prefix = prefixParts.join("-");
+  return parentName.startsWith("ácido ")
+    ? `ácido ${prefix}${parentName.slice("ácido ".length)}`
+    : `${prefix}${parentName}`;
+}
+
+function nitrogenSubstituentPrefixes(
+  group: FunctionalGroup | undefined,
+  parentPath: number[],
+  molecule: Molecule,
+  skeleton: Molecule,
+) {
+  if (!group || !(group.kind === "amine" || group.kind === "amide")) return [];
+  const extraCarbonIds = atomNeighbors(group.heteroAtomId, molecule)
+    .map((neighbor) => neighbor.atomId)
+    .filter((atomId) => {
+      const atom = getAtom(atomId, molecule);
+      if (!atom || !isCarbonAtom(atom)) return false;
+      if (group.kind === "amide" && atomId === group.carbonId) return false;
+      return !parentPath.includes(atomId);
+    });
+  const names = extraCarbonIds.map((atomId) => {
+    const length = simpleAlkylLength(atomId, skeleton);
+    return alkylNames[length] ?? "alquil";
+  });
+  const counts = new Map<string, number>();
+  names.forEach((name) => counts.set(name, (counts.get(name) ?? 0) + 1));
+  return [...counts.entries()].map(([name, count]) => {
+    if (count === 1) return `N-${name}`;
+    const prefix = simplePrefixes[count] ?? `${count}`;
+    return `${Array.from({ length: count }, () => "N").join(",")}-${prefix}${name}`;
+  });
+}
+
+function analyzeFunctionalAcyclic(
+  molecule: Molecule,
+  skeleton: Molecule,
+  groups: FunctionalGroup[],
+  primaryKind: FunctionalGroupKind | undefined,
+): Analysis {
+  const adjacency = buildAdjacency(skeleton);
+  const bondOrders = new Map(
+    skeleton.bonds.map((bond) => [bondKey(bond[0], bond[1]), getBondOrder(bond)]),
+  );
+  const atomIds = skeleton.atoms.map((atom) => atom.id);
+  const orientedPaths: number[][] = atomIds.map((atomId) => [atomId]);
+  atomIds.forEach((start, startIndex) => {
+    atomIds.slice(startIndex + 1).forEach((end) => {
+      const path = pathBetween(start, end, adjacency);
+      if (path.length > 1) orientedPaths.push(path, [...path].reverse());
+    });
+  });
+
+  const candidates = orientedPaths.map((path) => {
+    const pathSet = new Set(path);
+    const carbonSubstituents: NamedSubstituent[] = [];
+    const doubleBondLocants: number[] = [];
+    const tripleBondLocants: number[] = [];
+    path.slice(0, -1).forEach((atomId, index) => {
+      const order = bondOrders.get(bondKey(atomId, path[index + 1])) ?? 1;
+      if (order === 2) doubleBondLocants.push(index + 1);
+      if (order === 3) tripleBondLocants.push(index + 1);
+    });
+    path.forEach((atomId, index) => {
+      for (const neighbor of adjacency.get(atomId) ?? []) {
+        if (pathSet.has(neighbor)) continue;
+        const named = nameSubstituent(neighbor, atomId, adjacency);
+        carbonSubstituents.push({ ...named, locant: index + 1 });
+      }
+    });
+    const primaryLocants = primaryKind
+      ? groups
+          .filter((group) => group.kind === primaryKind)
+          .map((group) => locantForGroup(group, path))
+          .filter((locant): locant is number => Boolean(locant))
+          .sort((a, b) => a - b)
+      : [];
+    const functionalPrefixes = functionalPrefixSubstituents(
+      groups,
+      path,
+      primaryKind,
+      molecule,
+      skeleton,
+    );
+    return {
+      path,
+      carbonSubstituents,
+      functionalPrefixes,
+      substituents: [...carbonSubstituents, ...functionalPrefixes],
+      doubleBondLocants,
+      tripleBondLocants,
+      multipleBondCount: doubleBondLocants.length + tripleBondLocants.length,
+      primaryLocants,
+    };
+  });
+
+  candidates.sort((left, right) => {
+    if (left.primaryLocants.length !== right.primaryLocants.length) {
+      return right.primaryLocants.length - left.primaryLocants.length;
+    }
+    if (left.multipleBondCount !== right.multipleBondCount) {
+      return right.multipleBondCount - left.multipleBondCount;
+    }
+    if (left.path.length !== right.path.length) return right.path.length - left.path.length;
+    const primaryComparison = compareNumberLists(left.primaryLocants, right.primaryLocants);
+    if (primaryComparison !== 0) return primaryComparison;
+    const multipleComparison = compareNumberLists(
+      [...left.doubleBondLocants, ...left.tripleBondLocants].sort((a, b) => a - b),
+      [...right.doubleBondLocants, ...right.tripleBondLocants].sort((a, b) => a - b),
+    );
+    if (multipleComparison !== 0) return multipleComparison;
+    const doubleComparison = compareNumberLists(left.doubleBondLocants, right.doubleBondLocants);
+    if (doubleComparison !== 0) return doubleComparison;
+    const leftLocants = left.substituents.map((item) => item.locant).sort((a, b) => a - b);
+    const rightLocants = right.substituents.map((item) => item.locant).sort((a, b) => a - b);
+    return compareNumberLists(leftLocants, rightLocants);
+  });
+
+  const chosen = candidates[0];
+  const baseHydrocarbonName = makeChainName(
+    chosen.path.length,
+    chosen.doubleBondLocants,
+    chosen.tripleBondLocants,
+  );
+  const primaryGroup = primaryKind
+    ? groups.find((group) => group.kind === primaryKind && locantForGroup(group, chosen.path))
+    : undefined;
+  const chainName = primaryKind
+    ? makeFunctionalParentName(
+        chosen.path.length,
+        chosen.doubleBondLocants,
+        chosen.tripleBondLocants,
+        primaryKind,
+        chosen.primaryLocants,
+        primaryKind === "ester"
+          ? esterAlkylName(primaryGroup?.alkylCarbonId, skeleton)
+          : undefined,
+      )
+    : baseHydrocarbonName;
+  let substituentParts = formatSubstituentGroups(chosen.substituents);
+  if (
+    chosen.path.length <= 2
+    && chosen.substituents.length === 1
+    && chosen.substituents[0].locant === 1
+  ) {
+    substituentParts = substituentParts.map((part) => part.replace(/^1-/, ""));
+  }
+  substituentParts = [
+    ...nitrogenSubstituentPrefixes(primaryGroup, chosen.path, molecule, skeleton),
+    ...substituentParts,
+  ];
+  const name = combinePrefixAndParent(substituentParts, chainName);
+
+  return {
+    name,
+    commonName: name === "propan-2-ona" ? "acetona" : undefined,
+    formula: molecularFormula(molecule),
+    family: "acyclic",
+    mainChain: chosen.path,
+    chainName,
+    substituents: chosen.substituents,
+    numberedAtoms: new Map(chosen.path.map((atomId, index) => [atomId, index + 1])),
+    doubleBondLocants: chosen.doubleBondLocants,
+    tripleBondLocants: chosen.tripleBondLocants,
+    functionalGroups: groups,
+    primaryFunctionalGroup: primaryKind,
+    primaryFunctionalLabel: primaryKind ? functionalGroupLabels[primaryKind] : undefined,
+  };
+}
+
+function ringAnchorLocant(group: FunctionalGroup, path: number[], skeleton: Molecule) {
+  const direct = locantForGroup(group, path);
+  if (direct) return direct;
+  const adjacency = buildAdjacency(skeleton);
+  for (const carbonId of group.carbonIds) {
+    const anchor = path.find((ringAtomId) => (adjacency.get(ringAtomId) ?? []).includes(carbonId));
+    if (anchor) return path.indexOf(anchor) + 1;
+  }
+  return undefined;
+}
+
+function makeRingFunctionalParentName(
+  ring: RingInfo,
+  primaryKind: FunctionalGroupKind,
+  locants: number[],
+  group: FunctionalGroup | undefined,
+  skeleton: Molecule,
+) {
+  const aromatic = ring.kind === "aromatic" && ring.atomIds.length === 6;
+  const groupOnRing = group ? group.carbonIds.some((carbonId) => ring.atomIds.includes(carbonId)) : false;
+  const locant = [...locants].sort((a, b) => a - b)[0] ?? 1;
+  const alkyl = esterAlkylName(group?.alkylCarbonId, skeleton);
+  if (aromatic) {
+    if (primaryKind === "alcohol" && groupOnRing) return "fenol";
+    if (primaryKind === "amine" && groupOnRing) return "bencenamina";
+    if (primaryKind === "carboxylicAcid") return "ácido benzoico";
+    if (primaryKind === "ester") return `benzoato de ${alkyl}`;
+    if (primaryKind === "amide") return "benzamida";
+    if (primaryKind === "aldehyde") return "benzaldehído";
+  }
+
+  const base = ringBaseName(ring);
+  const stem = base.endsWith("o") ? base.slice(0, -1) : base;
+  if (!groupOnRing) {
+    if (primaryKind === "carboxylicAcid") return `ácido ${stem}ocarboxílico`;
+    if (primaryKind === "ester") return `${stem}ocarboxilato de ${alkyl}`;
+    if (primaryKind === "amide") return `${stem}ocarboxamida`;
+    if (primaryKind === "aldehyde") return `${stem}ocarbaldehído`;
+  }
+  if (primaryKind === "alcohol") return locant === 1 ? `${stem}ol` : `${stem}-${locant}-ol`;
+  if (primaryKind === "ketone") return locant === 1 ? `${stem}ona` : `${stem}-${locant}-ona`;
+  if (primaryKind === "amine") return `${stem}-${locant}-amina`;
+  return base;
+}
+
+function analyzeFunctionalRing(
+  molecule: Molecule,
+  skeleton: Molecule,
+  groups: FunctionalGroup[],
+  primaryKind: FunctionalGroupKind | undefined,
+  baseAnalysis: Analysis,
+): Analysis {
+  const ring = skeleton.rings?.find(
+    (candidate) => candidate.atomIds.some((atomId) => baseAnalysis.mainChain.includes(atomId)),
+  );
+  if (!ring) return { ...baseAnalysis, formula: molecularFormula(molecule), functionalGroups: groups };
+  const candidates = ringCandidates(skeleton, ring).map((candidate) => {
+    const primaryLocants = primaryKind
+      ? groups
+          .filter((group) => group.kind === primaryKind)
+          .map((group) => ringAnchorLocant(group, candidate.path, skeleton))
+          .filter((locant): locant is number => Boolean(locant))
+          .sort((a, b) => a - b)
+      : [];
+    const claimedCarbonIds = new Set(groups.flatMap((group) => group.atomIds));
+    const carbonSubstituents = candidate.substituents.filter(
+      (substituent) => !substituent.atomIds.some((atomId) => claimedCarbonIds.has(atomId)),
+    );
+    const functionalPrefixes = functionalPrefixSubstituents(
+      groups,
+      candidate.path,
+      primaryKind,
+      molecule,
+      skeleton,
+    );
+    return {
+      ...candidate,
+      primaryLocants,
+      substituents: [...carbonSubstituents, ...functionalPrefixes],
+    };
+  });
+  candidates.sort((left, right) => {
+    if (left.primaryLocants.length !== right.primaryLocants.length) {
+      return right.primaryLocants.length - left.primaryLocants.length;
+    }
+    const primaryComparison = compareNumberLists(left.primaryLocants, right.primaryLocants);
+    if (primaryComparison !== 0) return primaryComparison;
+    const multipleComparison = compareNumberLists(
+      [...left.doubleBondLocants, ...left.tripleBondLocants].sort((a, b) => a - b),
+      [...right.doubleBondLocants, ...right.tripleBondLocants].sort((a, b) => a - b),
+    );
+    if (multipleComparison !== 0) return multipleComparison;
+    return compareNumberLists(
+      left.substituents.map((item) => item.locant).sort((a, b) => a - b),
+      right.substituents.map((item) => item.locant).sort((a, b) => a - b),
+    );
+  });
+  const chosen = candidates[0];
+  const primaryGroup = primaryKind
+    ? groups.find((group) => group.kind === primaryKind)
+    : undefined;
+  const hydrocarbonBase = unsaturatedRingBaseName(
+    ring,
+    chosen.doubleBondLocants,
+    chosen.tripleBondLocants,
+  );
+  const chainName = primaryKind
+    ? makeRingFunctionalParentName(ring, primaryKind, chosen.primaryLocants, primaryGroup, skeleton)
+    : hydrocarbonBase;
+  const ringPrefixParts = !primaryKind && chosen.substituents.length === 1
+    ? [chosen.substituents[0].complex
+        ? `(${chosen.substituents[0].name})`
+        : chosen.substituents[0].name]
+    : formatSubstituentGroups(chosen.substituents);
+  const name = combinePrefixAndParent(ringPrefixParts, chainName);
+  const commonName = chainName === "bencenamina" ? "anilina" : baseAnalysis.commonName;
+
+  return {
+    ...baseAnalysis,
+    name,
+    commonName,
+    formula: molecularFormula(molecule),
+    mainChain: chosen.path,
+    chainName,
+    substituents: chosen.substituents,
+    numberedAtoms: new Map(chosen.path.map((atomId, index) => [atomId, index + 1])),
+    doubleBondLocants: chosen.doubleBondLocants,
+    tripleBondLocants: chosen.tripleBondLocants,
+    functionalGroups: groups,
+    primaryFunctionalGroup: primaryKind,
+    primaryFunctionalLabel: primaryKind ? functionalGroupLabels[primaryKind] : undefined,
+  };
+}
+
+function analyzeMolecule(molecule: Molecule): Analysis {
+  const skeleton = carbonSkeleton(molecule);
+  const baseAnalysis = analyzeHydrocarbonMolecule(skeleton);
+  const groups = detectFunctionalGroups(molecule);
+  if (!groups.length) {
+    return { ...baseAnalysis, formula: molecularFormula(molecule), functionalGroups: [] };
+  }
+  const primaryKind = selectPrimaryFunctionalGroup(groups);
+  if (skeleton.rings?.length) {
+    return analyzeFunctionalRing(molecule, skeleton, groups, primaryKind, baseAnalysis);
+  }
+  return analyzeFunctionalAcyclic(molecule, skeleton, groups, primaryKind);
 }
 
 const directionOptions = [
@@ -1179,6 +2148,7 @@ export default function Home() {
   const [showIupacName, setShowIupacName] = useState(true);
   const [showAlkylPalette, setShowAlkylPalette] = useState(false);
   const [showRingPalette, setShowRingPalette] = useState(false);
+  const [showFunctionalPalette, setShowFunctionalPalette] = useState(false);
   const [ringInsertMode, setRingInsertMode] = useState<RingInsertMode>("replace");
   const [commonAlkylNameSelections, setCommonAlkylNameSelections] = useState<string[]>([]);
   const [themePreference, setThemePreference] = useState<ThemePreference>("auto");
@@ -1266,14 +2236,19 @@ export default function Home() {
   };
 
   const addCarbon = (dx: number, dy: number) => {
+    if (!isCarbonAtom(selectedAtom) && newBondOrder !== 1) {
+      setNotice("En esta etapa, los nuevos enlaces desde O o N se añaden como enlaces simples para conservar un grupo funcional reconocido.");
+      return;
+    }
     if (molecule.rings?.length && newBondOrder !== 1) {
       setNotice("En los ciclos de esta etapa, los sustituyentes se conectan al anillo con enlaces simples.");
       return;
     }
     const selectedValence = getValenceUsed(selectedAtom.id, molecule);
-    if (selectedValence + newBondOrder > 4) {
+    const selectedLimit = getValenceLimit(selectedAtom.id, molecule);
+    if (selectedValence + newBondOrder > selectedLimit) {
       setNotice(
-        `No se puede añadir un enlace ${getBondOrderLabel(newBondOrder)}: ese carbono superaría su tetravalencia.`,
+        `No se puede añadir un enlace ${getBondOrderLabel(newBondOrder)}: el ${elementNames[getElement(selectedAtom)]} seleccionado superaría su valencia ${selectedLimit}.`,
       );
       return;
     }
@@ -1286,17 +2261,23 @@ export default function Home() {
     const nextId = Math.max(...molecule.atoms.map((atom) => atom.id)) + 1;
     const next: Molecule = {
       ...molecule,
-      atoms: [...molecule.atoms, { id: nextId, x: targetX, y: targetY }],
+      atoms: [...molecule.atoms, { id: nextId, x: targetX, y: targetY, element: "C" }],
       bonds: [...molecule.bonds, [selectedAtom.id, nextId, newBondOrder] as Bond],
     };
     commit(
       next,
-      `Carbono añadido con enlace ${getBondOrderLabel(newBondOrder)}. El nombre se recalculó automáticamente.`,
+      `Carbono añadido al ${elementNames[getElement(selectedAtom)]} con enlace ${getBondOrderLabel(newBondOrder)}. El nombre se recalculó automáticamente.`,
     );
     setSelectedId(nextId);
   };
 
   const cycleBondOrder = (a: number, b: number) => {
+    const atomA = getAtom(a, molecule);
+    const atomB = getAtom(b, molecule);
+    if ((atomA && !isCarbonAtom(atomA)) || (atomB && !isCarbonAtom(atomB))) {
+      setNotice("Los enlaces de O, N y halógenos quedan fijados para conservar el grupo funcional. Retira el átomo terminal y elige otro grupo si deseas cambiarlo.");
+      return;
+    }
     const containingRing = molecule.rings?.find(
       (ring) => ring.atomIds.includes(a) && ring.atomIds.includes(b),
     );
@@ -1322,15 +2303,11 @@ export default function Home() {
     const extraValence = nextOrder - currentOrder;
     if (
       extraValence > 0
-      && (getValenceUsed(a, molecule) + extraValence > 4
-        || getValenceUsed(b, molecule) + extraValence > 4)
+      && (getValenceUsed(a, molecule) + extraValence > getValenceLimit(a, molecule)
+        || getValenceUsed(b, molecule) + extraValence > getValenceLimit(b, molecule))
     ) {
-      const attemptedValence = Math.max(
-        getValenceUsed(a, molecule) + extraValence,
-        getValenceUsed(b, molecule) + extraValence,
-      );
       setNotice(
-        `Cambio imposible: el enlace ${getBondOrderLabel(nextOrder)} haría que un carbono alcanzara valencia ${attemptedValence}; el máximo permitido es 4.`,
+        `Cambio imposible: el enlace ${getBondOrderLabel(nextOrder)} superaría la valencia permitida de uno de sus átomos.`,
       );
       return;
     }
@@ -1345,6 +2322,10 @@ export default function Home() {
   };
 
   const addAlkylGroup = (template: AlkylTemplate) => {
+    if (!isCarbonAtom(selectedAtom)) {
+      setNotice("Selecciona un carbono para añadir un grupo alquilo.");
+      return;
+    }
     if (getValenceUsed(selectedAtom.id, molecule) + 1 > 4) {
       setNotice("Ese carbono ya tiene cuatro enlaces. Selecciona otro para añadir el grupo alquilo.");
       return;
@@ -1411,18 +2392,128 @@ export default function Home() {
     setSelectedId(idMap[0]);
   };
 
+  const addFunctionalGroup = (template: FunctionalGroupTemplate) => {
+    if (!isCarbonAtom(selectedAtom)) {
+      setNotice("Los grupos funcionales de la biblioteca se incorporan desde un carbono seleccionado.");
+      return;
+    }
+
+    const carbonNeighbors = atomNeighbors(selectedAtom.id, molecule)
+      .filter((neighbor) => {
+        const atom = getAtom(neighbor.atomId, molecule);
+        return atom && isCarbonAtom(atom);
+      });
+    const heteroNeighbors = atomNeighbors(selectedAtom.id, molecule)
+      .filter((neighbor) => {
+        const atom = getAtom(neighbor.atomId, molecule);
+        return atom && !isCarbonAtom(atom);
+      });
+    const incomingValence = template.bonds
+      .filter(([from]) => from === 0)
+      .reduce((total, bond) => total + bond[2], 0);
+
+    if (
+      template.requirement === "terminal-carbon"
+      && (carbonNeighbors.length > 1
+        || carbonNeighbors.some((neighbor) => neighbor.order !== 1)
+        || heteroNeighbors.length > 0)
+    ) {
+      setNotice(`${template.label} requiere un carbono terminal: selecciona un CH₃ del extremo de la cadena.`);
+      return;
+    }
+    if (
+      template.requirement === "internal-carbon"
+      && (carbonNeighbors.length !== 2
+        || carbonNeighbors.some((neighbor) => neighbor.order !== 1)
+        || heteroNeighbors.length > 0)
+    ) {
+      setNotice(`${template.label} requiere un carbono interno unido por enlaces simples a otros dos carbonos.`);
+      return;
+    }
+    if (getValenceUsed(selectedAtom.id, molecule) + incomingValence > 4) {
+      setNotice(`No se puede añadir ${template.label.toLowerCase()}: el carbono superaría su tetravalencia.`);
+      return;
+    }
+
+    const occupied = new Set(molecule.atoms.map((atom) => `${atom.x.toFixed(4)},${atom.y.toFixed(4)}`));
+    const orientations = [
+      { dx: 1, dy: 0 },
+      { dx: 0, dy: 1 },
+      { dx: -1, dy: 0 },
+      { dx: 0, dy: -1 },
+    ];
+    const selectedRing = ringContainingAtom(molecule, selectedAtom.id);
+    if (selectedRing) {
+      const ringAtoms = molecule.atoms.filter((atom) => selectedRing.atomIds.includes(atom.id));
+      const center = ringAtoms.reduce(
+        (total, atom) => ({ x: total.x + atom.x / ringAtoms.length, y: total.y + atom.y / ringAtoms.length }),
+        { x: 0, y: 0 },
+      );
+      const outward = { x: selectedAtom.x - center.x, y: selectedAtom.y - center.y };
+      orientations.sort(
+        (left, right) => right.dx * outward.x + right.dy * outward.y - (left.dx * outward.x + left.dy * outward.y),
+      );
+    }
+
+    let placement: { x: number; y: number }[] | null = null;
+    for (const orientation of orientations) {
+      for (const mirror of [1, -1]) {
+        const candidate = template.atoms.map((atom) => ({
+          x: selectedAtom.x + atom.x * orientation.dx - atom.y * orientation.dy * mirror,
+          y: selectedAtom.y + atom.x * orientation.dy + atom.y * orientation.dx * mirror,
+        }));
+        const keys = candidate.map((atom) => `${atom.x.toFixed(4)},${atom.y.toFixed(4)}`);
+        if (keys.every((key) => !occupied.has(key)) && new Set(keys).size === keys.length) {
+          placement = candidate;
+          break;
+        }
+      }
+      if (placement) break;
+    }
+
+    if (!placement) {
+      setNotice("No hay espacio libre para dibujar ese grupo. Prueba otro carbono o retira una rama cercana.");
+      return;
+    }
+
+    const firstId = Math.max(...molecule.atoms.map((atom) => atom.id)) + 1;
+    const idMap = placement.map((_, index) => firstId + index);
+    const addedAtoms = placement.map((position, index) => ({
+      ...position,
+      id: idMap[index],
+      element: template.atoms[index].element,
+    }));
+    const addedBonds = template.bonds.map(([from, to, order]) => [
+      from === 0 ? selectedAtom.id : idMap[from - 1],
+      idMap[to - 1],
+      order,
+    ] as Bond);
+    const next: Molecule = {
+      ...molecule,
+      atoms: [...molecule.atoms, ...addedAtoms],
+      bonds: [...molecule.bonds, ...addedBonds],
+    };
+    commit(
+      next,
+      `${template.label} añadido (${template.shortFormula}). Fórmula, grupo principal y nombre recalculados.`,
+    );
+    setSelectedId(idMap[0]);
+    setShowFunctionalPalette(false);
+  };
+
   const removeSelected = () => {
     if (ringContainingAtom(molecule, selectedAtom.id)) {
       setNotice("El carbono seleccionado forma parte del anillo y no puede retirarse. Elige un sustituyente terminal.");
       return;
     }
     const degree = (adjacency.get(selectedAtom.id) ?? []).length;
-    if (molecule.atoms.length === 1) {
+    const carbonCount = molecule.atoms.filter(isCarbonAtom).length;
+    if (isCarbonAtom(selectedAtom) && carbonCount === 1) {
       setNotice("La molécula debe conservar al menos un carbono.");
       return;
     }
     if (degree > 1) {
-      setNotice("Solo puedes retirar un carbono terminal para no cortar la molécula en dos.");
+      setNotice("Solo puedes retirar un átomo terminal para no cortar la molécula en dos.");
       return;
     }
     const neighbor = adjacency.get(selectedAtom.id)?.[0];
@@ -1431,7 +2522,7 @@ export default function Home() {
       atoms: molecule.atoms.filter((atom) => atom.id !== selectedAtom.id),
       bonds: molecule.bonds.filter(([a, b]) => a !== selectedAtom.id && b !== selectedAtom.id),
     };
-    commit(next, "Carbono terminal retirado.");
+    commit(next, `${elementNames[getElement(selectedAtom)]} terminal retirado.`);
     setSelectedId(neighbor ?? next.atoms[0].id);
   };
 
@@ -1460,10 +2551,15 @@ export default function Home() {
     setSelectedId(preset.molecule.atoms[0].id);
     setShowAlkylPalette(false);
     setShowRingPalette(false);
+    setShowFunctionalPalette(false);
   };
 
   const loadRingTemplate = (template: RingTemplate) => {
     if (ringInsertMode === "attach") {
+      if (!isCarbonAtom(selectedAtom)) {
+        setNotice("Selecciona un carbono antes de unir un anillo.");
+        return;
+      }
       if (template.molecule.atoms.length !== template.size) {
         setNotice(
           `${template.label} es un ejemplo completo. Para añadir otro núcleo aromático, elige Benceno.`,
@@ -1492,6 +2588,7 @@ export default function Home() {
       setSelectedId(attached.attachmentId);
       setShowRingPalette(false);
       setShowAlkylPalette(false);
+      setShowFunctionalPalette(false);
       return;
     }
 
@@ -1503,6 +2600,7 @@ export default function Home() {
     setRingInsertMode("attach");
     setShowRingPalette(false);
     setShowAlkylPalette(false);
+    setShowFunctionalPalette(false);
   };
 
   const newMolecule = () => {
@@ -1511,6 +2609,7 @@ export default function Home() {
     setSelectedId(1);
     setRingInsertMode("replace");
     setShowRingPalette(false);
+    setShowFunctionalPalette(false);
   };
 
   const changeViewMode = (mode: ViewMode) => {
@@ -1535,10 +2634,13 @@ export default function Home() {
   const viewCenterX = (minX + maxX) / 2;
   const viewCenterY = (minY + maxY) / 2;
   const selectedValence = getValenceUsed(selectedAtom.id, molecule);
-  const selectedHydrogens = 4 - selectedValence;
+  const selectedHydrogens = getImplicitHydrogens(selectedAtom.id, molecule);
+  const selectedElement = getElement(selectedAtom);
+  const selectedValenceLimit = getValenceLimit(selectedAtom.id, molecule);
+  const carbonCount = molecule.atoms.filter(isCarbonAtom).length;
   const hasMultipleBonds = analysis.doubleBondLocants.length > 0 || analysis.tripleBondLocants.length > 0;
   const isRingStructure = analysis.family !== "acyclic";
-  const structureFamilyLabel = analysis.family === "aromatic"
+  const carbonFamilyLabel = analysis.family === "aromatic"
     ? "Aromático"
     : analysis.family === "polycyclic"
       ? `${molecule.rings?.length ?? 0} anillos`
@@ -1553,6 +2655,11 @@ export default function Home() {
       : hasMultipleBonds
         ? "Insaturado"
         : "Alcano";
+  const structureFamilyLabel = analysis.primaryFunctionalLabel
+    ? `${analysis.primaryFunctionalLabel} · ${carbonFamilyLabel}`
+    : analysis.functionalGroups.length
+      ? `${analysis.functionalGroups[0].label} · ${carbonFamilyLabel}`
+      : carbonFamilyLabel;
   const themeModeLabel = themePreference === "auto"
     ? `Auto · ${isDarkTheme ? "oscuro" : "claro"}`
     : themePreference === "dark"
@@ -1566,21 +2673,31 @@ export default function Home() {
       ? `${analysis.tripleBondLocants.length === 1 ? "triple" : "triples"} en ${analysis.tripleBondLocants.join(",")}`
       : "",
   ].filter(Boolean).join(" y ");
-  const primaryStructureTitle = analysis.family === "aromatic"
+  const primaryStructureTitle = analysis.primaryFunctionalLabel
+    ? "Grupo funcional principal"
+    : analysis.functionalGroups.length
+      ? "Grupo funcional"
+    : analysis.family === "aromatic"
     ? "Núcleo aromático"
     : analysis.family === "polycyclic"
       ? "Sistema de anillos"
     : analysis.family === "cycloalkane"
       ? "Anillo principal"
       : "Cadena principal";
-  const primaryStructureExplanation = analysis.family === "aromatic"
+  const primaryStructureExplanation = analysis.primaryFunctionalLabel
+    ? `Se reconoce ${analysis.primaryFunctionalLabel.toLowerCase()} como el grupo de mayor prioridad. Este grupo determina el nombre base: ${analysis.chainName}.`
+    : analysis.functionalGroups.length
+      ? `La estructura contiene ${analysis.functionalGroups.map((group) => group.label.toLowerCase()).join(" y ")}; se expresan como prefijos sobre ${analysis.chainName}.`
+    : analysis.family === "aromatic"
     ? "El anillo de seis carbonos con tres enlaces alternados se reconoce como el núcleo benceno."
     : analysis.family === "polycyclic"
       ? `La estructura contiene ${molecule.rings?.length ?? 0} anillos. Se toma como principal el que reúne más conexiones y aporta el nombre base: ${analysis.chainName}.`
     : analysis.family === "cycloalkane"
       ? `El ciclo contiene ${analysis.mainChain.length} carbonos${hasMultipleBonds ? ` e incluye enlaces ${multipleBondSummary}` : ""}; aporta el nombre base: ${analysis.chainName}.`
       : `La cadena elegida tiene ${analysis.mainChain.length} carbonos${hasMultipleBonds ? ` e incluye enlaces ${multipleBondSummary}` : ""}: ${analysis.chainName}.`;
-  const numberingExplanation = isRingStructure
+  const numberingExplanation = analysis.primaryFunctionalLabel
+    ? `La cadena o el anillo se orienta para entregar el localizador más bajo al grupo ${analysis.primaryFunctionalLabel.toLowerCase()}, antes que a enlaces múltiples y sustituyentes.`
+    : isRingStructure
     ? hasMultipleBonds
       ? "El anillo se numera desde un enlace múltiple y en el sentido que entrega los localizadores más bajos a dobles y triples enlaces."
       : analysis.substituents.length
@@ -1589,7 +2706,11 @@ export default function Home() {
     : hasMultipleBonds
       ? "Se numera desde el extremo que entrega los localizadores más bajos a los enlaces múltiples."
       : "Se escoge el extremo que entrega el conjunto de localizadores más bajo.";
-  const namingRuleTitle = analysis.family === "aromatic"
+  const namingRuleTitle = analysis.primaryFunctionalLabel
+    ? "Prioridad funcional"
+    : analysis.functionalGroups.length
+      ? "Prefijos funcionales"
+    : analysis.family === "aromatic"
     ? "Aromaticidad"
     : analysis.family === "polycyclic"
       ? "Anillos como sustituyentes"
@@ -1598,7 +2719,11 @@ export default function Home() {
       : hasMultipleBonds
         ? "Prioridad de insaturación"
         : "Orden alfabético";
-  const namingRuleExplanation = analysis.family === "aromatic"
+  const namingRuleExplanation = analysis.primaryFunctionalLabel
+    ? `El grupo ${analysis.primaryFunctionalLabel.toLowerCase()} aporta el sufijo principal; los grupos de menor prioridad se nombran como prefijos.`
+    : analysis.functionalGroups.length
+      ? "Los halógenos y grupos alcoxi se indican como sustituyentes con su localizador correspondiente."
+    : analysis.family === "aromatic"
     ? "Los enlaces alternados representan los seis electrones π deslocalizados del anillo de benceno."
     : analysis.family === "polycyclic"
       ? "Un benceno unido como sustituyente se denomina fenil; un cicloalcano unido se nombra cicloalquil."
@@ -1616,11 +2741,11 @@ export default function Home() {
         <div className="brand-mark" aria-hidden="true">
           <span>C</span>
           <i />
-          <span>C</span>
+          <span>O</span>
         </div>
         <div className="brand-copy">
           <p>Laboratorio interactivo</p>
-          <h1>Constructor de hidrocarburos</h1>
+          <h1>Constructor de química orgánica</h1>
         </div>
         <div className="header-actions">
           <button
@@ -1634,7 +2759,7 @@ export default function Home() {
           </button>
           <div className="scope-pill">
             <span className="status-dot" />
-            Acíclicos · cíclicos · aromáticos
+            Hidrocarburos · grupos funcionales
           </div>
         </div>
       </header>
@@ -1647,7 +2772,7 @@ export default function Home() {
         <div className="step-line" />
         <div>
           <span className="step-number">2</span>
-          <p><strong>Añade</strong> carbonos y toca enlaces</p>
+          <p><strong>Añade</strong> C, enlaces y grupos funcionales</p>
         </div>
         <div className="step-line" />
         <div>
@@ -1661,7 +2786,7 @@ export default function Home() {
           <div className="card-heading">
             <div>
               <p className="eyebrow">Estructura molecular</p>
-              <h2>Construye el esqueleto de carbonos</h2>
+              <h2>Construye la estructura orgánica</h2>
             </div>
             <div className="heading-actions">
               <div className="view-mode-switch" role="group" aria-label="Tipo de representación molecular">
@@ -1717,6 +2842,9 @@ export default function Home() {
                 const positionA = displayPositions.get(a)!;
                 const positionB = displayPositions.get(b)!;
                 const isMainBond = mainChainSet.has(a) && mainChainSet.has(b);
+                const atomA = getAtom(a, molecule)!;
+                const atomB = getAtom(b, molecule)!;
+                const isFunctionalBond = !isCarbonAtom(atomA) || !isCarbonAtom(atomB);
                 const deltaX = positionB.x - positionA.x;
                 const deltaY = positionB.y - positionA.y;
                 const bondLength = Math.hypot(deltaX, deltaY) || 1;
@@ -1726,7 +2854,8 @@ export default function Home() {
                 const containingRing = molecule.rings?.find(
                   (ring) => ring.atomIds.includes(a) && ring.atomIds.includes(b),
                 );
-                const lockedBond = containingRing?.kind === "aromatic"
+                const lockedBond = isFunctionalBond
+                  || containingRing?.kind === "aromatic"
                   || Boolean(molecule.rings?.length && !containingRing);
                 return (
                   <g
@@ -1742,7 +2871,7 @@ export default function Home() {
                     role="button"
                     tabIndex={0}
                     aria-label={lockedBond
-                      ? `Enlace ${getBondOrderLabel(order)} fijado para conservar la estructura cíclica`
+                      ? `Enlace ${getBondOrderLabel(order)} fijado para conservar ${isFunctionalBond ? "el grupo funcional" : "la estructura cíclica"}`
                       : `Enlace ${getBondOrderLabel(order)}. Activar para cambiar a ${getBondOrderLabel(order === 3 ? 1 : (order + 1) as BondOrder)}`}
                   >
                     <line
@@ -1755,7 +2884,7 @@ export default function Home() {
                     {offsets.map((offset, index) => (
                       <line
                         key={index}
-                        className={`${isMainBond ? "bond main-bond" : "bond branch-bond"} ${viewMode === "skeletal" ? "skeletal-bond" : ""}`}
+                        className={`${isMainBond ? "bond main-bond" : "bond branch-bond"} ${isFunctionalBond ? "functional-bond" : ""} ${viewMode === "skeletal" ? "skeletal-bond" : ""}`}
                         x1={positionA.x + normalX * offset}
                         y1={positionA.y + normalY * offset}
                         x2={positionB.x + normalX * offset}
@@ -1767,45 +2896,51 @@ export default function Home() {
               })}
 
               {molecule.atoms.map((atom) => {
-                const hydrogenCount = 4 - getValenceUsed(atom.id, molecule);
+                const element = getElement(atom);
+                const carbonAtom = isCarbonAtom(atom);
+                const hydrogenCount = getImplicitHydrogens(atom.id, molecule);
                 const isSelected = atom.id === selectedAtom.id;
                 const chainNumber = analysis.numberedAtoms.get(atom.id);
                 const position = displayPositions.get(atom.id)!;
-                const atomLabel = showHydrogens
-                  ? hydrogenCount === 0
-                    ? "C"
-                    : hydrogenCount === 1
-                      ? "CH"
-                      : `CH${toSubscript(hydrogenCount)}`
-                  : "C";
+                const atomLabel = carbonAtom
+                  ? showHydrogens
+                    ? hydrogenCount === 0
+                      ? "C"
+                      : hydrogenCount === 1
+                        ? "CH"
+                        : `CH${toSubscript(hydrogenCount)}`
+                    : "C"
+                  : showHydrogens && hydrogenCount
+                    ? `${element}H${hydrogenCount > 1 ? toSubscript(hydrogenCount) : ""}`
+                    : element;
                 return (
                   <g
                     key={atom.id}
-                    className={`carbon-node ${viewMode === "skeletal" ? "skeletal-node" : "condensed-node"} ${isSelected ? "selected" : ""} ${mainChainSet.has(atom.id) ? "on-main-chain" : "on-branch"}`}
+                    className={`carbon-node ${carbonAtom ? "carbon-element" : `hetero-node element-${element.toLowerCase()}`} ${viewMode === "skeletal" && carbonAtom ? "skeletal-node" : "condensed-node"} ${isSelected ? "selected" : ""} ${mainChainSet.has(atom.id) ? "on-main-chain" : "on-branch"}`}
                     transform={`translate(${position.x} ${position.y})`}
                     onClick={() => {
                       setSelectedId(atom.id);
-                      setNotice(`Carbono ${chainNumber ?? "sustituyente"} seleccionado.`);
+                      setNotice(`${elementNames[element][0].toUpperCase()}${elementNames[element].slice(1)} ${chainNumber ?? "del grupo funcional"} seleccionado.`);
                     }}
                     role="button"
                     tabIndex={0}
-                    aria-label={`Seleccionar carbono ${chainNumber ?? atom.id}`}
+                    aria-label={`Seleccionar ${elementNames[element]} ${chainNumber ?? atom.id}`}
                     onKeyDown={(event) => {
                       if (event.key === "Enter" || event.key === " ") setSelectedId(atom.id);
                     }}
                   >
-                    {viewMode === "skeletal" ? (
+                    {viewMode === "skeletal" && carbonAtom ? (
                       <>
                         <circle className="skeletal-hit-target" r="31" />
                         {isSelected && <circle className="skeletal-selection-ring" r="22" />}
                         <circle className="skeletal-anchor" r="3.2" />
-                        {molecule.atoms.length === 1 && (
+                        {carbonCount === 1 && molecule.atoms.length === 1 && (
                           <g className="methane-marker">
                             <circle r="28" />
                             <text textAnchor="middle" dominantBaseline="central">CH₄</text>
                           </g>
                         )}
-                        {showNumbering && chainNumber && molecule.atoms.length > 1 && (
+                        {showNumbering && chainNumber && carbonCount > 1 && (
                           <g className="skeletal-number" transform="translate(20 -22)">
                             <circle className="number-circle" r="12" />
                             <text className="number-label" textAnchor="middle" dominantBaseline="central">{chainNumber}</text>
@@ -1830,7 +2965,8 @@ export default function Home() {
               })}
             </svg>
 
-            <div className={`structure-family-badge family-${analysis.family}`}>
+            <div className={`structure-family-badge family-${analysis.family} ${analysis.functionalGroups.length ? "has-functional-group" : ""}`}>
+              {analysis.functionalGroups.length > 0 && <span aria-hidden="true">⚗</span>}
               {analysis.family === "aromatic" && <span aria-hidden="true">⌬</span>}
               {analysis.family === "cycloalkane" && <span aria-hidden="true">⬡</span>}
               {analysis.family === "polycyclic" && <span aria-hidden="true">⬡–⬡</span>}
@@ -1864,10 +3000,10 @@ export default function Home() {
 
           <div className="builder-toolbar">
             <div className="selection-summary">
-              <span className="selection-icon">C</span>
+              <span className={`selection-icon selection-${selectedElement.toLowerCase()}`}>{selectedElement}</span>
               <div>
-                <p>Carbono seleccionado</p>
-                <strong>{selectedHydrogens} H implícito{selectedHydrogens === 1 ? "" : "s"} · valencia C–C {selectedValence}/4</strong>
+                <p>{elementNames[selectedElement][0].toUpperCase() + elementNames[selectedElement].slice(1)} seleccionado</p>
+                <strong>{selectedHydrogens} H implícito{selectedHydrogens === 1 ? "" : "s"} · valencia {selectedValence}/{selectedValenceLimit}</strong>
               </div>
             </div>
 
@@ -1915,7 +3051,10 @@ export default function Home() {
                 className={`alkyl-button ${showAlkylPalette ? "active" : ""}`}
                 onClick={() => {
                   setShowAlkylPalette(!showAlkylPalette);
-                  if (!showAlkylPalette) setShowRingPalette(false);
+                  if (!showAlkylPalette) {
+                    setShowRingPalette(false);
+                    setShowFunctionalPalette(false);
+                  }
                 }}
                 aria-expanded={showAlkylPalette}
                 aria-controls="alkyl-palette"
@@ -1930,6 +3069,7 @@ export default function Home() {
                   setShowRingPalette(nextVisible);
                   if (nextVisible) {
                     setShowAlkylPalette(false);
+                    setShowFunctionalPalette(false);
                     setRingInsertMode(molecule.rings?.length ? "attach" : "replace");
                   }
                 }}
@@ -1938,6 +3078,22 @@ export default function Home() {
               >
                 <span aria-hidden="true">⬡</span>
                 Anillos
+              </button>
+              <button
+                className={`functional-button ${showFunctionalPalette ? "active" : ""}`}
+                onClick={() => {
+                  const nextVisible = !showFunctionalPalette;
+                  setShowFunctionalPalette(nextVisible);
+                  if (nextVisible) {
+                    setShowAlkylPalette(false);
+                    setShowRingPalette(false);
+                  }
+                }}
+                aria-expanded={showFunctionalPalette}
+                aria-controls="functional-palette"
+              >
+                <span aria-hidden="true">OH</span>
+                Grupos funcionales
               </button>
               <button className="remove-button" onClick={removeSelected}>
                 <span>−</span>
@@ -2004,8 +3160,8 @@ export default function Home() {
                   className={ringInsertMode === "attach" ? "active" : ""}
                   onClick={() => setRingInsertMode("attach")}
                   aria-pressed={ringInsertMode === "attach"}
-                  disabled={selectedValence >= 4}
-                  title={selectedValence >= 4 ? "Selecciona un carbono con una valencia libre" : undefined}
+                  disabled={!isCarbonAtom(selectedAtom) || selectedValence >= 4}
+                  title={!isCarbonAtom(selectedAtom) || selectedValence >= 4 ? "Selecciona un carbono con una valencia libre" : undefined}
                 >
                   <span aria-hidden="true">＋</span>
                   Unir al C seleccionado
@@ -2081,6 +3237,61 @@ export default function Home() {
 
               <p className="alkyl-note ring-note">
                 Puedes repetir “Unir al C seleccionado” para construir moléculas con varios anillos. Los anillos quedan conectados por enlaces simples; no se fusionan ni comparten carbonos.
+              </p>
+            </div>
+          )}
+
+          {showFunctionalPalette && (
+            <div className="alkyl-palette functional-palette" id="functional-palette">
+              <div className="alkyl-palette-heading">
+                <div>
+                  <strong>Biblioteca de grupos funcionales</strong>
+                  <p>Selecciona primero el carbono que llevará el grupo. La valencia y el nombre se validan automáticamente.</p>
+                </div>
+                <button onClick={() => setShowFunctionalPalette(false)} aria-label="Cerrar grupos funcionales">×</button>
+              </div>
+
+              <div className="functional-priority-note">
+                <span aria-hidden="true">⇧</span>
+                <p><strong>La prioridad importa:</strong> el grupo principal define el sufijo y recibe el localizador más bajo.</p>
+              </div>
+
+              {([
+                { id: "oxygen", title: "Grupos con oxígeno", detail: "Alcoholes, carbonilos, ácidos y derivados" },
+                { id: "nitrogen", title: "Grupos con nitrógeno", detail: "Aminas y amidas" },
+                { id: "halogen", title: "Derivados halogenados", detail: "F, Cl, Br e I se nombran como prefijos" },
+              ] as const).map((category) => (
+                <div className={`functional-section functional-${category.id}`} key={category.id}>
+                  <div className="functional-section-heading">
+                    <strong>{category.title}</strong>
+                    <span>{category.detail}</span>
+                  </div>
+                  <div className="functional-grid">
+                    {FUNCTIONAL_GROUP_TEMPLATES
+                      .filter((template) => template.category === category.id)
+                      .map((template) => (
+                        <button
+                          className="functional-option"
+                          key={template.id}
+                          onClick={() => addFunctionalGroup(template)}
+                          title={`Añadir ${template.label.toLowerCase()}: ${template.detail}`}
+                        >
+                          <span className="functional-formula">{template.shortFormula}</span>
+                          <span className="functional-copy">
+                            <strong>{template.label}</strong>
+                            <small>{template.detail}</small>
+                          </span>
+                          {template.requirement !== "open" && (
+                            <em>{template.requirement === "terminal-carbon" ? "C terminal" : "C interno"}</em>
+                          )}
+                        </button>
+                      ))}
+                  </div>
+                </div>
+              ))}
+
+              <p className="alkyl-note functional-note">
+                Para aldehídos, ácidos, ésteres y amidas usa un carbono terminal. Para una cetona, selecciona un carbono interno de la cadena.
               </p>
             </div>
           )}
@@ -2196,6 +3407,18 @@ export default function Home() {
             </button>
           </div>
 
+          {analysis.functionalGroups.length > 0 && (
+            <div className="functional-detection" aria-label="Grupos funcionales detectados">
+              <span>Detectados</span>
+              <div>
+                {[...new Map(analysis.functionalGroups.map((group) => [group.label, group])).values()]
+                  .map((group) => (
+                    <strong key={group.label}>{group.label}</strong>
+                  ))}
+              </div>
+            </div>
+          )}
+
           <div className="formula-row">
             <div>
               <span>Fórmula molecular</span>
@@ -2203,7 +3426,11 @@ export default function Home() {
             </div>
             <div>
               <span>Carbonos totales</span>
-              <strong>{molecule.atoms.length}</strong>
+              <strong>{carbonCount}</strong>
+            </div>
+            <div>
+              <span>Grupo principal</span>
+              <strong>{analysis.primaryFunctionalLabel ?? (analysis.functionalGroups[0]?.label || "Hidrocarburo")}</strong>
             </div>
           </div>
 
@@ -2245,7 +3472,7 @@ export default function Home() {
         <div className="preset-list">
           {PRESETS.map((preset) => (
             <button key={preset.label} onClick={() => loadPreset(preset)}>
-              <span className="preset-structure">{preset.molecule.atoms.length} C</span>
+              <span className="preset-structure">{preset.molecule.atoms.filter(isCarbonAtom).length} C</span>
               <span>{preset.label}</span>
               <i>→</i>
             </button>
@@ -2254,9 +3481,9 @@ export default function Home() {
       </section>
 
       <footer>
-        <p><strong>Alcance actual:</strong> hidrocarburos acíclicos y estructuras con uno o varios anillos conectados.</p>
+        <p><strong>Alcance actual:</strong> hidrocarburos y nueve familias funcionales con O, N y halógenos.</p>
         <p className="footer-note">
-          Los hidrógenos se completan automáticamente respetando la tetravalencia del carbono.
+          Los hidrógenos se completan automáticamente respetando las valencias de C, O, N y halógenos.
           <button
             className="credit-trigger"
             onClick={() => setShowCreatorCredit((visible) => !visible)}
