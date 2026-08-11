@@ -16,7 +16,7 @@ before(async () => {
     logLevel: "error",
     appType: "custom",
     plugins: [react()],
-    server: { middlewareMode: true },
+    server: { middlewareMode: true, hmr: false },
   });
   ({ analyzeMolecule, getSingleRingUnsaturationNameOption } = await server.ssrLoadModule("/app/page.tsx"));
 });
