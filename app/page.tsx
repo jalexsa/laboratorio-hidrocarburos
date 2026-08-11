@@ -1804,6 +1804,17 @@ function locantForGroup(group: FunctionalGroup, path: number[]) {
   return carbonId ? path.indexOf(carbonId) + 1 : undefined;
 }
 
+function anchorLocantForGroup(group: FunctionalGroup, path: number[], skeleton: Molecule) {
+  const direct = locantForGroup(group, path);
+  if (direct) return direct;
+  const adjacency = buildAdjacency(skeleton);
+  for (const carbonId of group.carbonIds) {
+    const anchor = path.find((parentAtomId) => (adjacency.get(parentAtomId) ?? []).includes(carbonId));
+    if (anchor) return path.indexOf(anchor) + 1;
+  }
+  return undefined;
+}
+
 function functionalPrefixSubstituents(
   groups: FunctionalGroup[],
   path: number[],
@@ -1813,37 +1824,74 @@ function functionalPrefixSubstituents(
 ): NamedSubstituent[] {
   const prefixes: NamedSubstituent[] = [];
   groups.forEach((group) => {
-    const locant = locantForGroup(group, path);
+    const directLocant = locantForGroup(group, path);
+    const locant = directLocant ?? anchorLocantForGroup(group, path, skeleton);
     if (!locant) return;
-    let name: string | undefined;
+    if (group.kind === primaryKind) return;
+
+    const addPrefix = (name: string) => {
+      prefixes.push({
+        locant,
+        name,
+        sortName: stripForAlphabetizing(name),
+        complex: false,
+        atomIds: group.atomIds,
+      });
+    };
+
     if (group.kind === "halogen") {
       const element = getElement(getAtom(group.heteroAtomId, molecule)!);
-      name = element === "F" ? "fluoro" : element === "Cl" ? "cloro" : element === "Br" ? "bromo" : "yodo";
+      addPrefix(element === "F" ? "fluoro" : element === "Cl" ? "cloro" : element === "Br" ? "bromo" : "yodo");
     } else if (group.kind === "ether") {
       const parentCarbonId = group.carbonIds.find((candidate) => path.includes(candidate));
       const otherCarbonId = group.carbonIds.find((candidate) => candidate !== parentCarbonId);
-      if (otherCarbonId) name = alkoxyName(otherCarbonId, skeleton);
-    } else if (group.kind !== primaryKind) {
-      name = group.kind === "alcohol"
-        ? "hidroxi"
-        : group.kind === "ketone"
-          ? "oxo"
-          : group.kind === "amine"
-            ? "amino"
-            : group.kind === "aldehyde"
-              ? "formil"
-              : undefined;
+      if (otherCarbonId) addPrefix(alkoxyName(otherCarbonId, skeleton));
+    } else if (group.kind === "alcohol") {
+      addPrefix("hidroxi");
+    } else if (group.kind === "ketone") {
+      addPrefix("oxo");
+    } else if (group.kind === "amine") {
+      addPrefix("amino");
+    } else if (group.kind === "aldehyde") {
+      addPrefix(directLocant ? "oxo" : "formil");
+    } else if (group.kind === "carboxylicAcid") {
+      addPrefix("carboxi");
+    } else if (group.kind === "ester") {
+      const alkoxy = group.alkylCarbonId
+        ? alkoxyName(group.alkylCarbonId, skeleton)
+        : "alcoxi";
+      if (directLocant) {
+        addPrefix(alkoxy);
+        addPrefix("oxo");
+      } else {
+        addPrefix(`${alkoxy}carbonil`);
+      }
+    } else if (group.kind === "amide") {
+      if (directLocant) {
+        addPrefix("amino");
+        addPrefix("oxo");
+      } else {
+        addPrefix("carbamoil");
+      }
     }
-    if (!name) return;
-    prefixes.push({
-      locant,
-      name,
-      sortName: stripForAlphabetizing(name),
-      complex: false,
-      atomIds: group.atomIds,
-    });
   });
   return prefixes;
+}
+
+function suffixMultiplier(count: number, suffix: string) {
+  const prefix = simplePrefixes[count] ?? `${count}`;
+  if (suffix === "ol" && prefix.endsWith("a")) return prefix.slice(0, -1);
+  return prefix;
+}
+
+function formatEsterAlkylNames(names: string[]) {
+  if (!names.length) return "alquilo";
+  const counts = new Map<string, number>();
+  names.forEach((name) => counts.set(name, (counts.get(name) ?? 0) + 1));
+  return [...counts.entries()]
+    .sort(([left], [right]) => compareAlphabeticalNames(left, right))
+    .map(([name, count]) => count === 1 ? name : `${simplePrefixes[count] ?? count}${name}`)
+    .join(" y ");
 }
 
 function makeFunctionalParentName(
@@ -1852,23 +1900,39 @@ function makeFunctionalParentName(
   tripleLocants: number[],
   kind: FunctionalGroupKind,
   locants: number[],
-  esterAlkyl?: string,
+  esterAlkylNames: string[] = [],
 ) {
   const hydrocarbonName = makeChainName(length, doubleLocants, tripleLocants);
   const stem = hydrocarbonName.endsWith("o") ? hydrocarbonName.slice(0, -1) : hydrocarbonName;
   const sortedLocants = [...locants].sort((a, b) => a - b);
   const locantText = sortedLocants.join(",");
+  const count = sortedLocants.length;
 
-  if (kind === "carboxylicAcid") return `ácido ${stem}oico`;
-  if (kind === "ester") return `${stem}oato de ${esterAlkyl ?? "alquilo"}`;
-  if (kind === "amide") return `${stem}amida`;
-  if (kind === "aldehyde") return `${stem}al`;
+  if (kind === "carboxylicAcid") {
+    return count > 1
+      ? `ácido ${hydrocarbonName}${suffixMultiplier(count, "oico")}oico`
+      : `ácido ${stem}oico`;
+  }
+  if (kind === "ester") {
+    return count > 1
+      ? `${hydrocarbonName}${suffixMultiplier(count, "oato")}oato de ${formatEsterAlkylNames(esterAlkylNames)}`
+      : `${stem}oato de ${formatEsterAlkylNames(esterAlkylNames)}`;
+  }
+  if (kind === "amide") {
+    return count > 1
+      ? `${hydrocarbonName}${suffixMultiplier(count, "amida")}amida`
+      : `${stem}amida`;
+  }
+  if (kind === "aldehyde") {
+    return count > 1
+      ? `${hydrocarbonName}${suffixMultiplier(count, "al")}al`
+      : `${stem}al`;
+  }
 
   if (sortedLocants.length > 1) {
-    const prefix = simplePrefixes[sortedLocants.length] ?? `${sortedLocants.length}`;
-    if (kind === "alcohol") return `${hydrocarbonName}-${locantText}-${prefix}ol`;
-    if (kind === "ketone") return `${hydrocarbonName}-${locantText}-${prefix}ona`;
-    if (kind === "amine") return `${hydrocarbonName}-${locantText}-${prefix}amina`;
+    if (kind === "alcohol") return `${hydrocarbonName}-${locantText}-${suffixMultiplier(count, "ol")}ol`;
+    if (kind === "ketone") return `${hydrocarbonName}-${locantText}-${suffixMultiplier(count, "ona")}ona`;
+    if (kind === "amine") return `${hydrocarbonName}-${locantText}-${suffixMultiplier(count, "amina")}amina`;
   }
 
   const locant = sortedLocants[0] ?? 1;
@@ -2016,9 +2080,10 @@ function analyzeFunctionalAcyclic(
     chosen.doubleBondLocants,
     chosen.tripleBondLocants,
   );
-  const primaryGroup = primaryKind
-    ? groups.find((group) => group.kind === primaryKind && locantForGroup(group, chosen.path))
-    : undefined;
+  const primaryGroups = primaryKind
+    ? groups.filter((group) => group.kind === primaryKind && locantForGroup(group, chosen.path))
+    : [];
+  const primaryGroup = primaryGroups[0];
   const chainName = primaryKind
     ? makeFunctionalParentName(
         chosen.path.length,
@@ -2027,8 +2092,8 @@ function analyzeFunctionalAcyclic(
         primaryKind,
         chosen.primaryLocants,
         primaryKind === "ester"
-          ? esterAlkylName(primaryGroup?.alkylCarbonId, skeleton)
-          : undefined,
+          ? primaryGroups.map((group) => esterAlkylName(group.alkylCarbonId, skeleton))
+          : [],
       )
     : baseHydrocarbonName;
   let substituentParts = formatSubstituentGroups(chosen.substituents, enabledAliases);
@@ -2062,49 +2127,105 @@ function analyzeFunctionalAcyclic(
   };
 }
 
-function ringAnchorLocant(group: FunctionalGroup, path: number[], skeleton: Molecule) {
-  const direct = locantForGroup(group, path);
-  if (direct) return direct;
-  const adjacency = buildAdjacency(skeleton);
-  for (const carbonId of group.carbonIds) {
-    const anchor = path.find((ringAtomId) => (adjacency.get(ringAtomId) ?? []).includes(carbonId));
-    if (anchor) return path.indexOf(anchor) + 1;
-  }
-  return undefined;
-}
-
 function makeRingFunctionalParentName(
   ring: RingInfo,
   primaryKind: FunctionalGroupKind,
   locants: number[],
-  group: FunctionalGroup | undefined,
+  groups: FunctionalGroup[],
   skeleton: Molecule,
+  doubleBondLocants: number[],
+  tripleBondLocants: number[],
 ) {
   const aromatic = ring.kind === "aromatic" && ring.atomIds.length === 6;
-  const groupOnRing = group ? group.carbonIds.some((carbonId) => ring.atomIds.includes(carbonId)) : false;
-  const locant = [...locants].sort((a, b) => a - b)[0] ?? 1;
-  const alkyl = esterAlkylName(group?.alkylCarbonId, skeleton);
+  const sortedLocants = [...locants].sort((a, b) => a - b);
+  const locantText = sortedLocants.join(",");
+  const count = sortedLocants.length;
+  const locant = sortedLocants[0] ?? 1;
+  const allGroupsOnRing = groups.length > 0 && groups.every((group) =>
+    group.carbonIds.some((carbonId) => ring.atomIds.includes(carbonId)),
+  );
+  const esterAlkylNames = groups.map((group) => esterAlkylName(group.alkylCarbonId, skeleton));
+  const esterAlkyl = formatEsterAlkylNames(esterAlkylNames);
+
   if (aromatic) {
-    if (primaryKind === "alcohol" && groupOnRing) return "fenol";
-    if (primaryKind === "amine" && groupOnRing) return "bencenamina";
-    if (primaryKind === "carboxylicAcid") return "ácido benzoico";
-    if (primaryKind === "ester") return `benzoato de ${alkyl}`;
-    if (primaryKind === "amide") return "benzamida";
-    if (primaryKind === "aldehyde") return "benzaldehído";
+    if (primaryKind === "alcohol" && allGroupsOnRing) {
+      if (count === 1) return "fenol";
+      if (count === ring.atomIds.length && sortedLocants.every((value, index) => value === index + 1)) {
+        return `benceno${suffixMultiplier(count, "ol")}ol`;
+      }
+      return `benceno-${locantText}-${suffixMultiplier(count, "ol")}ol`;
+    }
+    if (primaryKind === "amine" && allGroupsOnRing) {
+      return count === 1
+        ? "bencenamina"
+        : `benceno-${locantText}-${suffixMultiplier(count, "amina")}amina`;
+    }
+    if (primaryKind === "carboxylicAcid") {
+      return count === 1
+        ? "ácido benzoico"
+        : `ácido benceno-${locantText}-${suffixMultiplier(count, "carboxílico")}carboxílico`;
+    }
+    if (primaryKind === "ester") {
+      return count === 1
+        ? `benzoato de ${esterAlkyl}`
+        : `benceno-${locantText}-${suffixMultiplier(count, "carboxilato")}carboxilato de ${esterAlkyl}`;
+    }
+    if (primaryKind === "amide") {
+      return count === 1
+        ? "benzamida"
+        : `benceno-${locantText}-${suffixMultiplier(count, "carboxamida")}carboxamida`;
+    }
+    if (primaryKind === "aldehyde") {
+      return count === 1
+        ? "benzaldehído"
+        : `benceno-${locantText}-${suffixMultiplier(count, "carbaldehído")}carbaldehído`;
+    }
   }
 
-  const base = ringBaseName(ring);
+  const base = unsaturatedRingBaseName(ring, doubleBondLocants, tripleBondLocants);
   const stem = base.endsWith("o") ? base.slice(0, -1) : base;
-  if (!groupOnRing) {
-    if (primaryKind === "carboxylicAcid") return `ácido ${stem}ocarboxílico`;
-    if (primaryKind === "ester") return `${stem}ocarboxilato de ${alkyl}`;
-    if (primaryKind === "amide") return `${stem}ocarboxamida`;
-    if (primaryKind === "aldehyde") return `${stem}ocarbaldehído`;
+  if (!allGroupsOnRing) {
+    if (primaryKind === "carboxylicAcid") {
+      return count === 1
+        ? `ácido ${stem}ocarboxílico`
+        : `ácido ${base}-${locantText}-${suffixMultiplier(count, "carboxílico")}carboxílico`;
+    }
+    if (primaryKind === "ester") {
+      return count === 1
+        ? `${stem}ocarboxilato de ${esterAlkyl}`
+        : `${base}-${locantText}-${suffixMultiplier(count, "carboxilato")}carboxilato de ${esterAlkyl}`;
+    }
+    if (primaryKind === "amide") {
+      return count === 1
+        ? `${stem}ocarboxamida`
+        : `${base}-${locantText}-${suffixMultiplier(count, "carboxamida")}carboxamida`;
+    }
+    if (primaryKind === "aldehyde") {
+      return count === 1
+        ? `${stem}ocarbaldehído`
+        : `${base}-${locantText}-${suffixMultiplier(count, "carbaldehído")}carbaldehído`;
+    }
   }
-  if (primaryKind === "alcohol") return locant === 1 ? `${stem}ol` : `${stem}-${locant}-ol`;
-  if (primaryKind === "ketone") return locant === 1 ? `${stem}ona` : `${stem}-${locant}-ona`;
+  if (count > 1) {
+    if (primaryKind === "alcohol") return `${base}-${locantText}-${suffixMultiplier(count, "ol")}ol`;
+    if (primaryKind === "ketone") return `${base}-${locantText}-${suffixMultiplier(count, "ona")}ona`;
+    if (primaryKind === "amine") return `${base}-${locantText}-${suffixMultiplier(count, "amina")}amina`;
+  }
+  const hasUnsaturation = doubleBondLocants.length > 0 || tripleBondLocants.length > 0;
+  if (primaryKind === "alcohol") return locant === 1 && !hasUnsaturation ? `${stem}ol` : `${stem}-${locant}-ol`;
+  if (primaryKind === "ketone") return locant === 1 && !hasUnsaturation ? `${stem}ona` : `${stem}-${locant}-ona`;
   if (primaryKind === "amine") return `${stem}-${locant}-amina`;
   return base;
+}
+
+function aromaticFunctionalCommonName(chainName: string, substituents: NamedSubstituent[]) {
+  if (substituents.length) return undefined;
+  if (chainName === "bencenamina") return "anilina";
+  if (chainName === "benceno-1,2-diol") return "catecol";
+  if (chainName === "benceno-1,3-diol") return "resorcinol";
+  if (chainName === "benceno-1,4-diol") return "hidroquinona";
+  if (chainName === "benceno-1,3,5-triol") return "floroglucinol";
+  return undefined;
 }
 
 function analyzeFunctionalRing(
@@ -2123,7 +2244,7 @@ function analyzeFunctionalRing(
     const primaryLocants = primaryKind
       ? groups
           .filter((group) => group.kind === primaryKind)
-          .map((group) => ringAnchorLocant(group, candidate.path, skeleton))
+          .map((group) => anchorLocantForGroup(group, candidate.path, skeleton))
           .filter((locant): locant is number => Boolean(locant))
           .sort((a, b) => a - b)
       : [];
@@ -2166,16 +2287,24 @@ function analyzeFunctionalRing(
     );
   });
   const chosen = candidates[0];
-  const primaryGroup = primaryKind
-    ? groups.find((group) => group.kind === primaryKind)
-    : undefined;
+  const primaryGroups = primaryKind
+    ? groups.filter((group) => group.kind === primaryKind)
+    : [];
   const hydrocarbonBase = unsaturatedRingBaseName(
     ring,
     chosen.doubleBondLocants,
     chosen.tripleBondLocants,
   );
   const chainName = primaryKind
-    ? makeRingFunctionalParentName(ring, primaryKind, chosen.primaryLocants, primaryGroup, skeleton)
+    ? makeRingFunctionalParentName(
+        ring,
+        primaryKind,
+        chosen.primaryLocants,
+        primaryGroups,
+        skeleton,
+        chosen.doubleBondLocants,
+        chosen.tripleBondLocants,
+      )
     : hydrocarbonBase;
   const singleSubstituent = chosen.substituents.length === 1
     ? resolveSubstituentNaming(chosen.substituents[0], new Set(enabledAliases))
@@ -2186,7 +2315,9 @@ function analyzeFunctionalRing(
         : singleSubstituent.name]
     : formatSubstituentGroups(chosen.substituents, enabledAliases);
   const name = combinePrefixAndParent(ringPrefixParts, chainName);
-  const commonName = chainName === "bencenamina" ? "anilina" : baseAnalysis.commonName;
+  const commonName = ring.kind === "aromatic"
+    ? aromaticFunctionalCommonName(chainName, chosen.substituents)
+    : undefined;
 
   return {
     ...baseAnalysis,
