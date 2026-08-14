@@ -62,9 +62,9 @@ test("functional priority appears before the parent and substituent rules", () =
   assert.equal(result.ok, true, result.ok ? undefined : result.error);
   const analysis = analyzeMolecule(result.molecule);
   const steps = buildIupacReasoningSteps(result.molecule, analysis);
-  assert.deepEqual(steps.map((step) => step.number), ["01", "02", "04"]);
+  assert.deepEqual(steps.map((step) => step.number), ["01", "02", "03", "04"]);
   assert.match(steps[0].explanation, /ácido carboxílico/i);
-  assert.match(steps[0].explanation, /localizador 1/i);
+  assert.match(steps[0].explanation, /se fija como C1/i);
 });
 
 test("different substituents add locant and alphabetical-order steps", () => {
@@ -72,7 +72,7 @@ test("different substituents add locant and alphabetical-order steps", () => {
   assert.equal(result.ok, true, result.ok ? undefined : result.error);
   const analysis = analyzeMolecule(result.molecule);
   const steps = buildIupacReasoningSteps(result.molecule, analysis);
-  assert.deepEqual(steps.map((step) => step.number), ["02", "04", "05"]);
+  assert.deepEqual(steps.map((step) => step.number), ["02", "03", "04", "05"]);
   assert.match(steps.find((step) => step.number === "05").explanation, /etil → metil/i);
 });
 
@@ -81,6 +81,24 @@ test("an E alkene adds multiple-bond and CIP stereochemistry steps", () => {
   const analysis = analyzeMolecule(molecule);
   const steps = buildIupacReasoningSteps(molecule, analysis);
   assert.deepEqual(steps.map((step) => step.number), ["02", "03", "06"]);
-  assert.match(steps.find((step) => step.number === "03").explanation, /doble enlace.*C3/i);
+  assert.match(steps.find((step) => step.number === "03").explanation, /C=C en C3/i);
   assert.match(steps.find((step) => step.number === "06").explanation, /3E.*lados opuestos/i);
+});
+
+test("explains why an internal ketone is C4 in a hidden nine-carbon chain", () => {
+  const result = moleculeFromSmiles("CCCC(=O)CC(C)CCC");
+  assert.equal(result.ok, true, result.ok ? undefined : result.error);
+  const analysis = analyzeMolecule(result.molecule);
+  assert.equal(analysis.mainChain.length, 9);
+  assert.equal(analysis.primaryFunctionalGroup, "ketone");
+  const steps = buildIupacReasoningSteps(result.molecule, analysis);
+  const groupStep = steps.find((step) => step.number === "01");
+  const chainStep = steps.find((step) => step.number === "02");
+  const numberingStep = steps.find((step) => step.number === "03");
+  assert.match(groupStep.explanation, /carbonilo es interno/i);
+  assert.match(groupStep.explanation, /C4/i);
+  assert.match(chainStep.explanation, /octano.*nonano/i);
+  assert.match(chainStep.explanation, /modifica todos los localizadores/i);
+  assert.match(numberingStep.explanation, /C4.*C6/i);
+  assert.match(numberingStep.explanation, /no pueden invertir esta decisión/i);
 });

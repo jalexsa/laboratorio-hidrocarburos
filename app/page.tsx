@@ -2432,6 +2432,40 @@ function locantPhrase(locants: number[]) {
     : `los localizadores ${joinSpanishList(unique.map(String))}`;
 }
 
+function normalizeLocants(locants: number[]) {
+  return [...new Set(locants)].sort((left, right) => left - right);
+}
+
+function reverseAtomLocants(locants: number[], chainLength: number) {
+  return normalizeLocants(locants.map((locant) => chainLength + 1 - locant));
+}
+
+function reverseBondLocants(locants: number[], chainLength: number) {
+  return normalizeLocants(locants.map((locant) => chainLength - locant));
+}
+
+function carbonLocantsText(locants: number[]) {
+  const normalized = normalizeLocants(locants);
+  if (!normalized.length) return "sin localizador";
+  return normalized.map((locant) => `C${locant}`).join(", ");
+}
+
+function alkaneParentName(length: number) {
+  return alkaneRoots[length] ? `${alkaneRoots[length]}ano` : `cadena de ${length} carbonos`;
+}
+
+function multipleBondLocantsText(doubleLocants: number[], tripleLocants: number[]) {
+  const parts = [
+    doubleLocants.length
+      ? `C=C en ${carbonLocantsText(doubleLocants)}`
+      : "",
+    tripleLocants.length
+      ? `C≡C en ${carbonLocantsText(tripleLocants)}`
+      : "",
+  ].filter(Boolean);
+  return joinSpanishList(parts);
+}
+
 export function buildIupacReasoningSteps(
   molecule: Molecule,
   analysis: Analysis,
@@ -2439,45 +2473,59 @@ export function buildIupacReasoningSteps(
 ): IupacReasoningStep[] {
   const steps: IupacReasoningStep[] = [];
   const isRingStructure = analysis.family !== "acyclic";
+  const chainLength = analysis.mainChain.length;
   const hasMultipleBonds = analysis.doubleBondLocants.length > 0
     || analysis.tripleBondLocants.length > 0;
   const enabledAliasSet = new Set(enabledAliases);
+  const primaryKind = analysis.primaryFunctionalGroup;
+  const primaryGroups = primaryKind
+    ? analysis.functionalGroups.filter((group) => group.kind === primaryKind)
+    : [];
+  const primaryLocants = normalizeLocants(primaryGroups.flatMap((group) => group.carbonIds
+    .map((atomId) => analysis.numberedAtoms.get(atomId))
+    .filter((locant): locant is number => Boolean(locant))));
+  const terminalCarbonFunctions = new Set<FunctionalGroupKind>([
+    "carboxylicAcid",
+    "ester",
+    "amide",
+    "aldehyde",
+  ]);
 
-  if (analysis.primaryFunctionalGroup && analysis.primaryFunctionalLabel) {
-    const primaryKind = analysis.primaryFunctionalGroup;
+  if (primaryKind && analysis.primaryFunctionalLabel) {
     const detectedLabels = [...new Set(analysis.functionalGroups.map((group) => group.label.toLowerCase()))];
-    const primaryGroups = analysis.functionalGroups.filter((group) => group.kind === primaryKind);
-    const primaryLocants = primaryGroups.flatMap((group) => group.carbonIds
-      .map((atomId) => analysis.numberedAtoms.get(atomId))
-      .filter((locant): locant is number => Boolean(locant)));
-    const ownsParentCarbon = new Set<FunctionalGroupKind>([
-      "carboxylicAcid",
-      "ester",
-      "amide",
-      "aldehyde",
-    ]).has(primaryKind);
     const priorityLead = detectedLabels.length > 1
       ? `Entre ${joinSpanishList(detectedLabels)}, ${analysis.primaryFunctionalLabel.toLowerCase()} tiene la prioridad más alta.`
       : `Se identifica ${analysis.primaryFunctionalLabel.toLowerCase()} como el grupo de mayor prioridad.`;
-    const numberingRule = ownsParentCarbon
-      ? `Su carbono forma parte del esqueleto principal y recibe ${locantPhrase(primaryLocants)}.`
-      : `La numeración se orienta para que el carbono unido a este grupo reciba ${locantPhrase(primaryLocants)}.`;
+    let positionRule: string;
+    if (terminalCarbonFunctions.has(primaryKind)) {
+      positionRule = `El carbono propio de esta función forma parte del esqueleto principal y se fija como C1.`;
+    } else if (primaryKind === "ketone" && primaryLocants.some((locant) => locant > 1)) {
+      positionRule = `El carbonilo es interno: no puede convertirse mecánicamente en C1 sin cortar una de las continuaciones de la cadena. Debe recibir el menor localizador posible; aquí queda en ${carbonLocantsText(primaryLocants)}.`;
+    } else {
+      positionRule = `Esta función no obliga automáticamente a usar C1. El carbono que la porta debe recibir el menor localizador que permita la cadena principal; aquí recibe ${locantPhrase(primaryLocants)}.`;
+    }
     steps.push({
       number: "01",
       title: "Grupo funcional principal",
-      explanation: `${priorityLead} Aporta el sufijo del nombre; ${numberingRule.toLowerCase()}`,
+      explanation: `${priorityLead} Aporta el sufijo del nombre. ${positionRule}`,
     });
   }
 
   let parentExplanation: string;
   if (analysis.family === "aromatic") {
-    parentExplanation = `Se elige el anillo aromático de ${analysis.mainChain.length} carbonos que contiene la función prioritaria cuando existe. Este núcleo aporta el nombre base ${analysis.chainName}.`;
+    parentExplanation = `Se elige el anillo aromático de ${chainLength} carbonos que contiene la función prioritaria cuando existe. La elección se hace por conectividad, no por la orientación visual del dibujo, y aporta el nombre base ${analysis.chainName}.`;
   } else if (analysis.family === "polycyclic") {
     parentExplanation = `Se comparan los anillos del sistema y se elige como principal el que conserva la función prioritaria y el mayor número de conexiones. El esqueleto seleccionado aporta ${analysis.chainName}.`;
   } else if (analysis.family === "cycloalkane") {
-    parentExplanation = `Se elige el anillo continuo de ${analysis.mainChain.length} carbonos${analysis.primaryFunctionalLabel ? ` que contiene el grupo ${analysis.primaryFunctionalLabel.toLowerCase()}` : ""}. Este anillo aporta el nombre base ${analysis.chainName}.`;
+    parentExplanation = `Se elige el anillo continuo de ${chainLength} carbonos${analysis.primaryFunctionalLabel ? ` que contiene el grupo ${analysis.primaryFunctionalLabel.toLowerCase()}` : ""}. Este anillo aporta el nombre base ${analysis.chainName}.`;
   } else {
-    parentExplanation = `Se elige una cadena continua de ${analysis.mainChain.length} carbonos${analysis.primaryFunctionalLabel ? ` que contiene el grupo ${analysis.primaryFunctionalLabel.toLowerCase()}` : ""}. Es la cadena más larga compatible con la función principal y aporta el nombre base ${analysis.chainName}.`;
+    const totalCarbons = molecule.atoms.filter(isCarbonAtom).length;
+    const parentSkeleton = alkaneParentName(chainLength);
+    const shorterSkeleton = chainLength > 1 ? alkaneParentName(chainLength - 1) : "";
+    const hiddenChainReason = totalCarbons > chainLength && chainLength > 1
+      ? ` Al recorrer también las ramificaciones aparece esta ruta más larga: una ruta de ${chainLength - 1} carbonos (${shorterSkeleton}) se descarta si existe una ruta continua de ${chainLength} (${parentSkeleton}). Ese cambio de cadena principal modifica todos los localizadores.`
+      : " La cadena principal no se decide por la línea que parece más evidente en el dibujo: el motor compara todas las rutas continuas.";
+    parentExplanation = `Se elige la cadena continua más larga que contiene la función prioritaria cuando existe. La ruta seleccionada tiene ${chainLength} carbonos y su esqueleto es ${parentSkeleton}; por eso el nombre base resultante es ${analysis.chainName}.${hiddenChainReason}`;
   }
   steps.push({
     number: "02",
@@ -2485,22 +2533,82 @@ export function buildIupacReasoningSteps(
     explanation: parentExplanation,
   });
 
-  if (hasMultipleBonds) {
-    const bondDetails = [
-      analysis.doubleBondLocants.length
-        ? `${analysis.doubleBondLocants.length === 1 ? "el doble enlace" : "los dobles enlaces"} en ${joinSpanishList(analysis.doubleBondLocants.map((locant) => `C${locant}`))}`
-        : "",
-      analysis.tripleBondLocants.length
-        ? `${analysis.tripleBondLocants.length === 1 ? "el triple enlace" : "los triples enlaces"} en ${joinSpanishList(analysis.tripleBondLocants.map((locant) => `C${locant}`))}`
-        : "",
-    ].filter(Boolean);
-    const tieRule = analysis.doubleBondLocants.length && analysis.tripleBondLocants.length
-      ? " Si ambos conjuntos empatan, el doble enlace recibe el localizador más bajo."
-      : " La numeración conserva para estos enlaces el conjunto de localizadores más bajo.";
+  if (primaryKind || hasMultipleBonds || analysis.substituents.length) {
+    const explanationParts = [
+      "Se comparan ambos extremos en este orden: primero la función principal, después los enlaces múltiples y, solo si continúa el empate, los sustituyentes.",
+    ];
+    if (isRingStructure) {
+      explanationParts.push(
+        `En el anillo se eligen el punto de inicio y el sentido que respetan esa jerarquía${primaryLocants.length ? `; la función principal queda en ${carbonLocantsText(primaryLocants)}` : ""}.`,
+      );
+    } else {
+      const reversedPrimaryLocants = reverseAtomLocants(primaryLocants, chainLength);
+      const chosenDoubleLocants = normalizeLocants(analysis.doubleBondLocants);
+      const chosenTripleLocants = normalizeLocants(analysis.tripleBondLocants);
+      const reversedDoubleLocants = reverseBondLocants(chosenDoubleLocants, chainLength);
+      const reversedTripleLocants = reverseBondLocants(chosenTripleLocants, chainLength);
+      const chosenMultipleLocants = normalizeLocants([...chosenDoubleLocants, ...chosenTripleLocants]);
+      const reversedMultipleLocants = normalizeLocants([...reversedDoubleLocants, ...reversedTripleLocants]);
+      const chosenSubstituentLocants = [...analysis.substituents]
+        .map((substituent) => substituent.locant)
+        .sort((left, right) => left - right);
+      const reversedSubstituentLocants = reverseAtomLocants(chosenSubstituentLocants, chainLength);
+      let hierarchyResolved = false;
+
+      if (primaryKind && primaryLocants.length) {
+        const primaryComparison = compareNumberLists(primaryLocants, reversedPrimaryLocants);
+        if (primaryComparison < 0) {
+          explanationParts.push(
+            `La función principal resuelve la orientación: queda en ${carbonLocantsText(primaryLocants)}, mientras que desde el extremo contrario quedaría en ${carbonLocantsText(reversedPrimaryLocants)}. Se conserva el conjunto menor; los enlaces múltiples y sustituyentes no pueden invertir esta decisión.`,
+          );
+          hierarchyResolved = true;
+        } else if (primaryComparison === 0) {
+          explanationParts.push(
+            `La función principal empata desde ambos extremos en ${carbonLocantsText(primaryLocants)}; por eso se pasa al criterio siguiente.`,
+          );
+        }
+      }
+
+      if (!hierarchyResolved && hasMultipleBonds) {
+        const multipleComparison = compareNumberLists(chosenMultipleLocants, reversedMultipleLocants);
+        const doubleComparison = multipleComparison === 0
+          ? compareNumberLists(chosenDoubleLocants, reversedDoubleLocants)
+          : 0;
+        if (multipleComparison < 0 || doubleComparison < 0) {
+          explanationParts.push(
+            `Los enlaces múltiples rompen el empate: esta orientación da ${multipleBondLocantsText(chosenDoubleLocants, chosenTripleLocants)}, frente a ${multipleBondLocantsText(reversedDoubleLocants, reversedTripleLocants)} desde el otro extremo.${multipleComparison === 0 && doubleComparison < 0 ? " Al empatar el conjunto global, el doble enlace recibe el localizador menor." : ""}`,
+          );
+          hierarchyResolved = true;
+        } else if (multipleComparison === 0 && doubleComparison === 0) {
+          explanationParts.push(
+            `Los enlaces múltiples también empatan: ${multipleBondLocantsText(chosenDoubleLocants, chosenTripleLocants)} desde cualquiera de los extremos.`,
+          );
+        }
+      }
+
+      if (!hierarchyResolved && chosenSubstituentLocants.length) {
+        const substituentComparison = compareNumberLists(
+          chosenSubstituentLocants,
+          reversedSubstituentLocants,
+        );
+        if (substituentComparison < 0) {
+          explanationParts.push(
+            `Finalmente, los sustituyentes deciden: el conjunto ${chosenSubstituentLocants.join(",")} es menor que ${reversedSubstituentLocants.join(",")} desde el extremo contrario.`,
+          );
+          hierarchyResolved = true;
+        } else if (substituentComparison === 0) {
+          explanationParts.push("Los sustituyentes conservan el mismo conjunto de localizadores desde ambos extremos.");
+        }
+      }
+
+      if (!hierarchyResolved && !primaryKind && !hasMultipleBonds && !chosenSubstituentLocants.length) {
+        explanationParts.push("Ambos extremos son equivalentes para esta estructura.");
+      }
+    }
     steps.push({
       number: "03",
-      title: "Enlaces múltiples",
-      explanation: `Se localizan ${joinSpanishList(bondDetails)}.${tieRule}`,
+      title: "Numeración razonada",
+      explanation: explanationParts.join(" "),
     });
   }
 
@@ -2523,10 +2631,13 @@ export function buildIupacReasoningSteps(
       .map((locant) => `C${locant}`))}`);
 
   if (localizedSubstituents.length) {
+    const hierarchyReminder = primaryKind || hasMultipleBonds
+      ? "Se consideran después de la función principal y de los enlaces múltiples; solo rompen un empate previo."
+      : "Al no existir una función principal ni enlaces múltiples, este conjunto define el sentido de numeración.";
     steps.push({
       number: "04",
       title: "Sustituyentes y localizadores",
-      explanation: `Se orienta ${isRingStructure ? "el anillo" : "la cadena"} para obtener el conjunto de números más bajo. En esta estructura se ubica ${joinSpanishList(localizedSubstituents)}.`,
+      explanation: `Con la orientación ya evaluada, se ubica ${joinSpanishList(localizedSubstituents)}. ${hierarchyReminder}`,
     });
   }
 
