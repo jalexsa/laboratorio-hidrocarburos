@@ -3095,9 +3095,30 @@ button:focus-visible,
   transform: translateY(-1px);
 }
 
+.name-builder-input-group > button:disabled,
+.name-builder-examples button:disabled,
+.name-builder-input-group input:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.name-builder-input-group > button:disabled:hover {
+  background: #267361;
+  transform: none;
+}
+
 .name-builder-input-group > button span {
   font-size: 16px;
   line-height: 1;
+}
+
+.name-builder-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.42);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: history-spin 0.7s linear infinite;
 }
 
 .name-builder-footer {
@@ -3239,6 +3260,11 @@ html[data-theme="dark"] .name-builder-input-group input:focus {
 html[data-theme="dark"] .name-builder-input-group > button {
   background: #63b39b;
   color: #10251f;
+}
+
+html[data-theme="dark"] .name-builder-spinner {
+  border-color: rgba(16, 37, 31, 0.32);
+  border-top-color: #10251f;
 }
 
 html[data-theme="dark"] .name-builder-feedback {

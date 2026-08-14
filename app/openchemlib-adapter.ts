@@ -1,0 +1,171 @@
+import { SmilesParser } from "openchemlib";
+import type {
+  GeneratedAtom,
+  GeneratedBond,
+  GeneratedMolecule,
+  GeneratedRing,
+} from "./name-to-molecule";
+
+type SupportedElement = NonNullable<GeneratedAtom["element"]>;
+
+export type OpenChemLibBuildResult =
+  | { ok: true; molecule: GeneratedMolecule }
+  | { ok: false; error: string };
+
+const supportedElements = new Map<number, SupportedElement>([
+  [6, "C"],
+  [7, "N"],
+  [8, "O"],
+  [9, "F"],
+  [17, "Cl"],
+  [35, "Br"],
+  [53, "I"],
+]);
+
+function connectedAtomCount(atomIds: number[], bonds: GeneratedBond[]) {
+  if (!atomIds.length) return 0;
+  const adjacency = new Map(atomIds.map((id) => [id, [] as number[]]));
+  bonds.forEach(([left, right]) => {
+    adjacency.get(left)?.push(right);
+    adjacency.get(right)?.push(left);
+  });
+  const seen = new Set<number>();
+  const pending = [atomIds[0]];
+  while (pending.length) {
+    const atomId = pending.pop()!;
+    if (seen.has(atomId)) continue;
+    seen.add(atomId);
+    pending.push(...(adjacency.get(atomId) ?? []));
+  }
+  return seen.size;
+}
+
+export function moleculeFromSmiles(smiles: string): OpenChemLibBuildResult {
+  let oclMolecule;
+  try {
+    const parser = new SmilesParser();
+    parser.setRandomSeed(20260814);
+    oclMolecule = parser.parseMolecule(smiles);
+  } catch {
+    return { ok: false, error: "OpenChemLib no pudo convertir la estructura recibida." };
+  }
+
+  if (oclMolecule.getAllAtoms() > 120 || oclMolecule.getAllBonds() > 150) {
+    return {
+      ok: false,
+      error: "La molécula es demasiado grande para editarla con claridad en este canvas.",
+    };
+  }
+
+  const atomIndexToId = new Map<number, number>();
+  const rawAtoms: Array<GeneratedAtom & { rawX: number; rawY: number }> = [];
+  for (let atomIndex = 0; atomIndex < oclMolecule.getAllAtoms(); atomIndex += 1) {
+    const atomicNumber = oclMolecule.getAtomicNo(atomIndex);
+    if (atomicNumber === 1) continue;
+    const element = supportedElements.get(atomicNumber);
+    if (!element) {
+      return {
+        ok: false,
+        error: `La estructura contiene ${oclMolecule.getAtomLabel(atomIndex)}. Por ahora el laboratorio admite C, O, N y halógenos.`,
+      };
+    }
+    if (oclMolecule.getAtomCharge(atomIndex) !== 0) {
+      return {
+        ok: false,
+        error: "La estructura contiene cargas formales que este canvas todavía no representa.",
+      };
+    }
+    const id = rawAtoms.length + 1;
+    atomIndexToId.set(atomIndex, id);
+    rawAtoms.push({
+      id,
+      x: 0,
+      y: 0,
+      element,
+      rawX: oclMolecule.getAtomX(atomIndex),
+      rawY: oclMolecule.getAtomY(atomIndex),
+    });
+  }
+
+  if (!rawAtoms.some((atom) => atom.element === "C")) {
+    return { ok: false, error: "El laboratorio necesita una estructura orgánica con carbono." };
+  }
+
+  const bonds: GeneratedBond[] = [];
+  for (let bondIndex = 0; bondIndex < oclMolecule.getAllBonds(); bondIndex += 1) {
+    const left = atomIndexToId.get(oclMolecule.getBondAtom(0, bondIndex));
+    const right = atomIndexToId.get(oclMolecule.getBondAtom(1, bondIndex));
+    if (!left || !right) continue;
+    const order = oclMolecule.getBondOrder(bondIndex);
+    if (!(order === 1 || order === 2 || order === 3)) {
+      return { ok: false, error: "La estructura contiene un tipo de enlace aún no editable." };
+    }
+    bonds.push([left, right, order]);
+  }
+
+  const atomIds = rawAtoms.map((atom) => atom.id);
+  if (connectedAtomCount(atomIds, bonds) !== atomIds.length) {
+    return {
+      ok: false,
+      error: "El nombre describe varias especies separadas; construye una molécula orgánica a la vez.",
+    };
+  }
+
+  const centerX = rawAtoms.reduce((sum, atom) => sum + atom.rawX, 0) / rawAtoms.length;
+  const centerY = rawAtoms.reduce((sum, atom) => sum + atom.rawY, 0) / rawAtoms.length;
+  const bondLengths = bonds.map(([leftId, rightId]) => {
+    const left = rawAtoms[leftId - 1];
+    const right = rawAtoms[rightId - 1];
+    return Math.hypot(left.rawX - right.rawX, left.rawY - right.rawY);
+  }).filter((length) => length > 0.001);
+  const averageBondLength = bondLengths.length
+    ? bondLengths.reduce((sum, length) => sum + length, 0) / bondLengths.length
+    : 1;
+  const atoms: GeneratedAtom[] = rawAtoms.map(({ rawX, rawY, ...atom }) => ({
+    ...atom,
+    x: (rawX - centerX) / averageBondLength,
+    y: (rawY - centerY) / averageBondLength,
+  }));
+
+  const ringSet = oclMolecule.getRingSet();
+  const rings: GeneratedRing[] = [];
+  for (let ringIndex = 0; ringIndex < ringSet.getSize(); ringIndex += 1) {
+    const ringAtomIds = Array.from(ringSet.getRingAtoms(ringIndex), (atomIndex) =>
+      atomIndexToId.get(atomIndex),
+    ).filter((id): id is number => typeof id === "number");
+    if (ringAtomIds.length < 3) continue;
+    if (ringAtomIds.some((id) => atoms[id - 1].element !== "C")) {
+      return {
+        ok: false,
+        error: "OpenChemLib reconoció un heterociclo. El análisis IUPAC del laboratorio todavía requiere anillos formados por carbono.",
+      };
+    }
+    rings.push({
+      id: rings.length + 1,
+      kind: ringSet.isAromatic(ringIndex) ? "aromatic" : "cycloalkane",
+      atomIds: ringAtomIds,
+    });
+  }
+
+  for (let left = 0; left < rings.length; left += 1) {
+    for (let right = left + 1; right < rings.length; right += 1) {
+      const sharedAtoms = rings[left].atomIds.filter((id) => rings[right].atomIds.includes(id));
+      if (sharedAtoms.length > 1) {
+        return {
+          ok: false,
+          error: "OpenChemLib reconoció un sistema de anillos fusionados. Su análisis y edición se incorporarán en una próxima ampliación.",
+        };
+      }
+    }
+  }
+
+  return {
+    ok: true,
+    molecule: {
+      atoms,
+      bonds,
+      ...(rings.length ? { rings } : {}),
+    },
+  };
+}
+

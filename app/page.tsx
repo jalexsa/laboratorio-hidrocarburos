@@ -2543,10 +2543,16 @@ type LocalLibraryWritePayload = {
 };
 
 const localLibraryStorageKey = "organic-lab-history-v1";
+const publicNameResolverUrl =
+  "https://laboratorio-hidrocarburos.jalexsa.chatgpt.site/api/name-to-structure";
 
 function usesLocalLibrary() {
   return window.location.hostname === "jalexsa.github.io"
     || window.location.protocol === "file:";
+}
+
+function nameResolverUrl() {
+  return usesLocalLibrary() ? publicNameResolverUrl : "/api/name-to-structure";
 }
 
 function readLocalLibrary(): LocalLibraryState {
@@ -2806,6 +2812,7 @@ export default function Home() {
   const [notice, setNotice] = useState("Selecciona un carbono para añadir otro o toca un enlace para cambiar su orden.");
   const [nameBuilderOpen, setNameBuilderOpen] = useState(true);
   const [iupacInput, setIupacInput] = useState("");
+  const [nameBuilderBusy, setNameBuilderBusy] = useState(false);
   const [nameBuilderFeedback, setNameBuilderFeedback] = useState<NameBuilderFeedback | null>(null);
   const lastPersistedSignature = useRef("");
 
@@ -3096,38 +3103,99 @@ export default function Home() {
     setNotice(message);
   };
 
-  const constructFromIupacName = (event: FormEvent<HTMLFormElement>) => {
+  const constructFromIupacName = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const result = buildHydrocarbonFromIupacName(iupacInput);
-    if (!result.ok) {
+    const submittedName = iupacInput.trim();
+    if (!submittedName) {
       setNameBuilderOpen(true);
-      setNameBuilderFeedback({ kind: "error", message: result.error });
+      setNameBuilderFeedback({ kind: "error", message: "Escribe un nombre IUPAC para crear la estructura." });
       return;
     }
 
-    const next: Molecule = result.molecule;
-    const generatedAnalysis = analyzeMolecule(next, result.enabledAliases);
-    const commonName = generatedAnalysis.commonName
-      ? `; también se conoce como ${generatedAnalysis.commonName}`
-      : "";
-    const omittedRingLocant = /^ciclo[a-z]+(?:eno|ino)$/.test(result.normalizedInput);
+    setNameBuilderBusy(true);
+    setNameBuilderFeedback(null);
 
-    commit(
-      next,
-      `Estructura creada desde «${iupacInput.trim()}». Puedes seguir editándola átomo por átomo.`,
-    );
-    setSelectedId(next.atoms[0].id);
-    setCommonAlkylNameSelections(result.enabledAliases);
-    setUseSimplifiedRingUnsaturationName(omittedRingLocant);
-    setShowIupacName(true);
-    setRingInsertMode("replace");
-    setShowAlkylPalette(false);
-    setShowRingPalette(false);
-    setShowFunctionalPalette(false);
-    setNameBuilderFeedback({
-      kind: "success",
-      message: `Lista: ${generatedAnalysis.name}${commonName}. Ya quedó añadida a tu historial automático.`,
-    });
+    try {
+      let next: Molecule;
+      let enabledAliases: string[] = [];
+      let normalizedInput = submittedName.toLocaleLowerCase("es").replace(/\s+/g, "");
+      let engineLabel = "OPSIN + OpenChemLib";
+      let serviceWarning = "";
+
+      try {
+        const response = await fetch(nameResolverUrl(), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name: submittedName }),
+        });
+        const data = await response.json() as {
+          error?: string;
+          interpretedName?: string;
+          smiles?: string;
+          source?: "OPSIN" | "integrated-fallback";
+          warnings?: string[];
+        };
+        if (!response.ok || !data.smiles) {
+          throw new Error(data.error || "El motor químico no pudo interpretar ese nombre.");
+        }
+
+        const { moleculeFromSmiles } = await import("./openchemlib-adapter");
+        const converted = moleculeFromSmiles(data.smiles);
+        if (!converted.ok) throw new Error(converted.error);
+        next = converted.molecule;
+        if (data.source === "integrated-fallback") {
+          engineLabel = "OpenChemLib y el respaldo integrado";
+        }
+        normalizedInput = (data.interpretedName ?? submittedName)
+          .toLocaleLowerCase("es")
+          .replace(/\s+/g, "");
+        if (data.warnings?.length) serviceWarning = " OPSIN informó una posible ambigüedad del nombre.";
+      } catch (advancedError) {
+        const localResult = buildHydrocarbonFromIupacName(submittedName);
+        if (!localResult.ok) {
+          throw advancedError instanceof Error
+            ? advancedError
+            : new Error(localResult.error);
+        }
+        next = localResult.molecule;
+        enabledAliases = localResult.enabledAliases;
+        normalizedInput = localResult.normalizedInput;
+        engineLabel = "constructor local de respaldo";
+      }
+
+      const generatedAnalysis = analyzeMolecule(next, enabledAliases);
+      const commonName = generatedAnalysis.commonName
+        ? `; también se conoce como ${generatedAnalysis.commonName}`
+        : "";
+      const omittedRingLocant = /^ciclo[a-z]+(?:eno|ino)$/.test(normalizedInput);
+
+      commit(
+        next,
+        `Estructura creada desde «${submittedName}». Puedes seguir editándola átomo por átomo.`,
+      );
+      setSelectedId(next.atoms[0].id);
+      setCommonAlkylNameSelections(enabledAliases);
+      setUseSimplifiedRingUnsaturationName(omittedRingLocant);
+      setShowIupacName(true);
+      setRingInsertMode("replace");
+      setShowAlkylPalette(false);
+      setShowRingPalette(false);
+      setShowFunctionalPalette(false);
+      setNameBuilderFeedback({
+        kind: "success",
+        message: `Lista con ${engineLabel}: ${generatedAnalysis.name}${commonName}.${serviceWarning} Ya quedó añadida a tu historial automático.`,
+      });
+    } catch (error) {
+      setNameBuilderOpen(true);
+      setNameBuilderFeedback({
+        kind: "error",
+        message: error instanceof Error
+          ? error.message
+          : "No pude interpretar ese nombre IUPAC.",
+      });
+    } finally {
+      setNameBuilderBusy(false);
+    }
   };
 
   const cycleTheme = () => {
@@ -4293,9 +4361,9 @@ export default function Home() {
                 <span className="name-builder-mark" aria-hidden="true">Aa</span>
                 <div>
                   <strong>Construir por nombre IUPAC</strong>
-                  <small>Escribe un hidrocarburo o alcohol y el laboratorio dibujará su conectividad automáticamente.</small>
+                  <small>OPSIN interpreta el nombre y OpenChemLib crea el objeto molecular que se dibuja en el canvas.</small>
                 </div>
-                <span className="name-builder-scope">Hidrocarburos · alcoholes</span>
+                <span className="name-builder-scope">Motor químico avanzado</span>
               </div>
 
               <div className="name-builder-field-row">
@@ -4309,14 +4377,17 @@ export default function Home() {
                       setIupacInput(event.target.value);
                       setNameBuilderFeedback(null);
                     }}
-                    placeholder="Ej.: benceno-1,3,5-triol"
+                    placeholder="Ej.: ácido 2-metilpropanoico"
                     autoComplete="off"
                     spellCheck={false}
+                    disabled={nameBuilderBusy}
                     aria-describedby="name-builder-help"
                   />
-                  <button type="submit">
-                    Crear estructura
-                    <span aria-hidden="true">→</span>
+                  <button type="submit" disabled={nameBuilderBusy} aria-busy={nameBuilderBusy}>
+                    {nameBuilderBusy ? "Interpretando…" : "Crear estructura"}
+                    <span className={nameBuilderBusy ? "name-builder-spinner" : ""} aria-hidden="true">
+                      {nameBuilderBusy ? "" : "→"}
+                    </span>
                   </button>
                 </div>
               </div>
@@ -4324,10 +4395,11 @@ export default function Home() {
               <div className="name-builder-footer" id="name-builder-help">
                 <div className="name-builder-examples" aria-label="Ejemplos de nombres compatibles">
                   <span>Prueba:</span>
-                  {["benceno-1,3,5-triol", "propan-2-ol", "3-etil-2-metilhexano", "tolueno"].map((example) => (
+                  {["benceno-1,3,5-triol", "butan-2-ona", "ácido 2-metilpropanoico", "etanoato de metilo"].map((example) => (
                     <button
                       type="button"
                       key={example}
+                      disabled={nameBuilderBusy}
                       onClick={() => {
                         setIupacInput(example);
                         setNameBuilderFeedback(null);
@@ -4337,7 +4409,7 @@ export default function Home() {
                     </button>
                   ))}
                 </div>
-                <small>Admite cadenas, ciclos, aromáticos, alcoholes y polioles como benceno-1,3,5-triol.</small>
+                <small>Admite hidrocarburos, alcoholes, éteres, aldehídos, cetonas, ácidos, ésteres, aminas, amidas y halógenos.</small>
               </div>
 
               {nameBuilderFeedback && (
