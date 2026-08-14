@@ -13,6 +13,11 @@ import {
   type NameStructureResolution,
   resolveNameWithOpsin,
 } from "./opsin-name-resolver";
+import {
+  formatStereochemicalName,
+  inspectDoubleBondStereochemistry,
+  toggleDoubleBondGeometry,
+} from "./double-bond-stereochemistry";
 
 type CarbonAtom = {
   id: number;
@@ -2845,17 +2850,21 @@ export default function Home() {
     () => getSingleRingUnsaturationNameOption(analysis),
     [analysis],
   );
+  const stereochemicalName = useMemo(
+    () => formatStereochemicalName(molecule, analysis.mainChain, analysis.name),
+    [analysis.mainChain, analysis.name, molecule],
+  );
   const interactiveNameParts = useMemo(
     () => getInteractiveNameParts(
-      analysis.name,
+      stereochemicalName,
       commonAlkylNameSelections,
       ringUnsaturationNameOption,
       useSimplifiedRingUnsaturationName,
     ),
     [
-      analysis.name,
       commonAlkylNameSelections,
       ringUnsaturationNameOption,
+      stereochemicalName,
       useSimplifiedRingUnsaturationName,
     ],
   );
@@ -3307,6 +3316,27 @@ export default function Home() {
     if (bondIndex < 0) return;
 
     const currentOrder = getBondOrder(molecule.bonds[bondIndex]);
+    if (currentOrder === 2 && !containingRing) {
+      const stereoToggle = toggleDoubleBondGeometry(molecule, a, b);
+      if (stereoToggle.ok) {
+        const locantIndex = analysis.mainChain.slice(0, -1).findIndex(
+          (atomId, index) => {
+            const nextAtomId = analysis.mainChain[index + 1];
+            return (atomId === a && nextAtomId === b) || (atomId === b && nextAtomId === a);
+          },
+        );
+        const descriptor = locantIndex >= 0
+          ? `(${locantIndex + 1}${stereoToggle.configuration})`
+          : stereoToggle.configuration;
+        commit(
+          stereoToggle.molecule,
+          `Configuración cambiada a ${descriptor}: se rotó un lado del doble enlace y el nombre IUPAC se actualizó automáticamente.`,
+        );
+        setShowIupacName(true);
+        return;
+      }
+    }
+
     const nextOrder = (currentOrder === 3 ? 1 : currentOrder + 1) as BondOrder;
     const extraValence = nextOrder - currentOrder;
     if (
@@ -4474,10 +4504,31 @@ export default function Home() {
                 const lockedBond = isFunctionalBond
                   || containingRing?.kind === "aromatic"
                   || Boolean(molecule.rings?.length && !containingRing);
+                const stereoInspection = order === 2 && !lockedBond && !containingRing
+                  ? inspectDoubleBondStereochemistry(molecule, a, b)
+                  : null;
+                const stereoConfiguration = stereoInspection?.stereogenic
+                  ? stereoInspection.configuration
+                  : null;
+                const stereoToggleAvailable = Boolean(stereoInspection?.stereogenic);
+                const stereoLocantIndex = stereoToggleAvailable
+                  ? analysis.mainChain.slice(0, -1).findIndex((atomId, index) => {
+                      const nextAtomId = analysis.mainChain[index + 1];
+                      return (atomId === a && nextAtomId === b)
+                        || (atomId === b && nextAtomId === a);
+                    })
+                  : -1;
+                const stereoLocant = stereoLocantIndex >= 0 ? stereoLocantIndex + 1 : null;
+                const currentStereoLabel = stereoConfiguration
+                  ? `${stereoLocant ?? ""}${stereoConfiguration}`
+                  : "E/Z";
+                const nextStereoLabel = stereoConfiguration === "E" ? "Z" : "E";
+                const markerX = (positionA.x + positionB.x) / 2 + normalX * 25;
+                const markerY = (positionA.y + positionB.y) / 2 + normalY * 25;
                 return (
                   <g
                     key={`${a}-${b}`}
-                    className={`bond-control bond-order-${order} ${lockedBond ? "locked-bond" : ""}`}
+                    className={`bond-control bond-order-${order} ${lockedBond ? "locked-bond" : ""} ${stereoToggleAvailable ? "stereo-bond-control" : ""}`}
                     onClick={() => cycleBondOrder(a, b)}
                     onKeyDown={(event) => {
                       if (event.key === "Enter" || event.key === " ") {
@@ -4489,7 +4540,9 @@ export default function Home() {
                     tabIndex={0}
                     aria-label={lockedBond
                       ? `Enlace ${getBondOrderLabel(order)} fijado para conservar ${isFunctionalBond ? "el grupo funcional" : "la estructura cíclica"}`
-                      : `Enlace ${getBondOrderLabel(order)}. Activar para cambiar a ${getBondOrderLabel(order === 3 ? 1 : (order + 1) as BondOrder)}`}
+                      : stereoToggleAvailable
+                        ? `Doble enlace estereogénico ${currentStereoLabel}. Activar para cambiar a ${stereoLocant ?? ""}${nextStereoLabel}`
+                        : `Enlace ${getBondOrderLabel(order)}. Activar para cambiar a ${getBondOrderLabel(order === 3 ? 1 : (order + 1) as BondOrder)}`}
                   >
                     <line
                       className="bond-hit-target"
@@ -4508,6 +4561,18 @@ export default function Home() {
                         y2={positionB.y + normalY * offset}
                       />
                     ))}
+                    {stereoToggleAvailable && (
+                      <g
+                        className="stereo-bond-marker"
+                        transform={`translate(${markerX} ${markerY})`}
+                        aria-hidden="true"
+                      >
+                        <rect x="-16" y="-10" width="32" height="20" rx="10" />
+                        <text textAnchor="middle" dominantBaseline="central">
+                          {stereoConfiguration ?? "E/Z"}
+                        </text>
+                      </g>
+                    )}
                   </g>
                 );
               })}
@@ -4604,7 +4669,7 @@ export default function Home() {
             <div className="bond-touch-hint" aria-hidden="true">
               <span>↻</span>
               <strong>Toca un enlace</strong>
-              <small>simple → doble → triple</small>
+              <small>orden de enlace · E ↔ Z en C=C</small>
             </div>
 
             {viewMode === "skeletal" && (
