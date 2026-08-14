@@ -9,6 +9,10 @@ import {
   useState,
 } from "react";
 import { buildHydrocarbonFromIupacName } from "./name-to-molecule";
+import {
+  type NameStructureResolution,
+  resolveNameWithOpsin,
+} from "./opsin-name-resolver";
 
 type CarbonAtom = {
   id: number;
@@ -2543,16 +2547,30 @@ type LocalLibraryWritePayload = {
 };
 
 const localLibraryStorageKey = "organic-lab-history-v1";
-const publicNameResolverUrl =
-  "https://laboratorio-hidrocarburos.jalexsa.chatgpt.site/api/name-to-structure";
-
 function usesLocalLibrary() {
   return window.location.hostname === "jalexsa.github.io"
     || window.location.protocol === "file:";
 }
 
-function nameResolverUrl() {
-  return usesLocalLibrary() ? publicNameResolverUrl : "/api/name-to-structure";
+async function resolveNameStructure(name: string): Promise<NameStructureResolution> {
+  if (!usesLocalLibrary()) {
+    try {
+      const response = await fetch("/api/name-to-structure", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const data = await response.json() as NameStructureResolution & { error?: string };
+      if (response.ok && data.smiles) return data;
+    } catch {
+      // The direct public OPSIN request below also works if the Sites route is
+      // temporarily unavailable.
+    }
+  }
+
+  const directResult = await resolveNameWithOpsin(name);
+  if (directResult.ok) return directResult.value;
+  throw new Error(directResult.error);
 }
 
 function readLocalLibrary(): LocalLibraryState {
@@ -3123,21 +3141,7 @@ export default function Home() {
       let serviceWarning = "";
 
       try {
-        const response = await fetch(nameResolverUrl(), {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ name: submittedName }),
-        });
-        const data = await response.json() as {
-          error?: string;
-          interpretedName?: string;
-          smiles?: string;
-          source?: "OPSIN" | "integrated-fallback";
-          warnings?: string[];
-        };
-        if (!response.ok || !data.smiles) {
-          throw new Error(data.error || "El motor químico no pudo interpretar ese nombre.");
-        }
+        const data = await resolveNameStructure(submittedName);
 
         const { moleculeFromSmiles } = await import("./openchemlib-adapter");
         const converted = moleculeFromSmiles(data.smiles);
@@ -4395,7 +4399,13 @@ export default function Home() {
               <div className="name-builder-footer" id="name-builder-help">
                 <div className="name-builder-examples" aria-label="Ejemplos de nombres compatibles">
                   <span>Prueba:</span>
-                  {["benceno-1,3,5-triol", "butan-2-ona", "ácido 2-metilpropanoico", "etanoato de metilo"].map((example) => (
+                  {[
+                    "benceno-1,3,5-triol",
+                    "butan-2-ona",
+                    "ácido 2-metilpropanoico",
+                    "3-(2-oxopropil)ciclohexanona",
+                    "(2E)-2-etil-3-metilhex-2-enal",
+                  ].map((example) => (
                     <button
                       type="button"
                       key={example}
@@ -4409,7 +4419,7 @@ export default function Home() {
                     </button>
                   ))}
                 </div>
-                <small>Admite hidrocarburos, alcoholes, éteres, aldehídos, cetonas, ácidos, ésteres, aminas, amidas y halógenos.</small>
+                <small>Admite grupos funcionales, sustituyentes entre paréntesis y descriptores estereoquímicos E/Z.</small>
               </div>
 
               {nameBuilderFeedback && (

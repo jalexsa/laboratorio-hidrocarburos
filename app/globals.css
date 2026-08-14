@@ -3133,9 +3133,8 @@ button:focus-visible,
   display: flex;
   min-width: 0;
   align-items: center;
+  flex-wrap: wrap;
   gap: 5px;
-  overflow-x: auto;
-  scrollbar-width: thin;
 }
 
 .name-builder-examples > span {

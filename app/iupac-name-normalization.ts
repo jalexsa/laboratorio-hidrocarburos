@@ -12,7 +12,7 @@ const commonSpanishNames: Record<string, string> = {
 };
 
 function normalizePunctuation(value: string) {
-  return value
+  const normalized = value
     .trim()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -20,6 +20,15 @@ function normalizePunctuation(value: string) {
     .replace(/\s+/g, " ")
     .replace(/\s*-\s*/g, "-")
     .toLocaleLowerCase("es");
+
+  return normalized.replace(/\(([^()]*)\)/g, (_match, content: string) => {
+    const stereochemical = content.replace(
+      /(^|,)(\d*)([ersz])(?=,|$)/g,
+      (_descriptor, separator: string, locant: string, letter: string) =>
+        `${separator}${locant}${letter.toUpperCase()}`,
+    );
+    return `(${stereochemical})`;
+  });
 }
 
 function translateCore(value: string) {
