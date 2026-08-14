@@ -101,6 +101,27 @@ test("repeated substituents across carbons explain their distribution", () => {
   );
 });
 
+test("explains how a complex substituent is absorbed and reorganized", () => {
+  const sourceName = "5-(1-metiletil)-2-metilheptano";
+  const result = buildHydrocarbonFromIupacName(sourceName);
+  assert.equal(result.ok, true, result.ok ? undefined : result.error);
+  const analysis = analyzeMolecule(result.molecule);
+  assert.equal(analysis.name, "3-etil-2,6-dimetilheptano");
+  const steps = buildIupacReasoningSteps(
+    result.molecule,
+    analysis,
+    result.enabledAliases,
+    sourceName,
+  );
+  const chainStep = steps.find((step) => step.number === "02");
+  assert.match(chainStep.explanation, /sustituyente complejo \(1-metiletil\)/i);
+  assert.match(chainStep.explanation, /sus carbonos no desaparecen/i);
+  assert.match(chainStep.explanation, /heptano \(7 carbonos\)/i);
+  assert.match(chainStep.explanation, /un etilo en C3/i);
+  assert.match(chainStep.explanation, /dos grupos metilo en C2 y C6 \(dimetil\)/i);
+  assert.match(chainStep.explanation, /localizadores 2,3,6.*más bajo posible/i);
+});
+
 test("an E alkene adds multiple-bond and CIP stereochemistry steps", () => {
   const molecule = makeHex3EneE();
   const analysis = analyzeMolecule(molecule);

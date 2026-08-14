@@ -2524,10 +2524,40 @@ function naturalLocalizedSubstituent(name: string, locants: number[]) {
   return `${lead}: ${joinSpanishList(distribution)} (${multiplicativeName})`;
 }
 
+function extractComplexAlkylSubstituents(sourceName?: string | null) {
+  if (!sourceName) return [];
+  return [...sourceName.toLocaleLowerCase("es").matchAll(/\(([^()]+)\)/g)]
+    .map((match) => match[1].replace(/\s+/g, ""))
+    .filter((name) =>
+      /\d/.test(name)
+      && /(?:metil|etil|propil|butil|pentil|hexil|heptil|octil)$/.test(name)
+      && !/(?:oxo|hidroxi|amino|fluoro|cloro|bromo|yodo)/.test(name));
+}
+
+function buildLocalizedSubstituentGroups(
+  analysis: Analysis,
+  enabledAliasSet: ReadonlySet<string>,
+) {
+  const groups = new Map<string, { name: string; sortName: string; locants: number[] }>();
+  analysis.substituents.forEach((substituent) => {
+    const resolved = resolveSubstituentNaming(substituent, enabledAliasSet);
+    const key = `${resolved.sortName}:${resolved.name}`;
+    const current = groups.get(key) ?? {
+      name: resolved.name,
+      sortName: resolved.sortName,
+      locants: [],
+    };
+    current.locants.push(substituent.locant);
+    groups.set(key, current);
+  });
+  return groups;
+}
+
 export function buildIupacReasoningSteps(
   molecule: Molecule,
   analysis: Analysis,
   enabledAliases: readonly string[] = [],
+  sourceName?: string | null,
 ): IupacReasoningStep[] {
   const steps: IupacReasoningStep[] = [];
   const isRingStructure = analysis.family !== "acyclic";
@@ -2535,6 +2565,15 @@ export function buildIupacReasoningSteps(
   const hasMultipleBonds = analysis.doubleBondLocants.length > 0
     || analysis.tripleBondLocants.length > 0;
   const enabledAliasSet = new Set(enabledAliases);
+  const substituentGroups = buildLocalizedSubstituentGroups(analysis, enabledAliasSet);
+  const localizedSubstituents = [...substituentGroups.values()]
+    .sort((left, right) => Math.min(...left.locants) - Math.min(...right.locants))
+    .map((group) => naturalLocalizedSubstituent(group.name, group.locants));
+  const complexAlkylSubstituents = extractComplexAlkylSubstituents(sourceName);
+  const normalizedResultName = analysis.name.toLocaleLowerCase("es").replace(/\s+/g, "");
+  const reclassifiedComplexSubstituents = complexAlkylSubstituents.filter(
+    (name) => !normalizedResultName.includes(name),
+  );
   const primaryKind = analysis.primaryFunctionalGroup;
   const primaryGroups = primaryKind
     ? analysis.functionalGroups.filter((group) => group.kind === primaryKind)
@@ -2580,10 +2619,20 @@ export function buildIupacReasoningSteps(
     const totalCarbons = molecule.atoms.filter(isCarbonAtom).length;
     const parentSkeleton = alkaneParentName(chainLength);
     const shorterSkeleton = chainLength > 1 ? alkaneParentName(chainLength - 1) : "";
-    const hiddenChainReason = totalCarbons > chainLength && chainLength > 1
+    const hasComplexReclassification = reclassifiedComplexSubstituents.length > 0
+      && localizedSubstituents.length > 0;
+    const hiddenChainReason = hasComplexReclassification
+      ? " La cadena principal no se conserva solo porque así aparecía escrita en el nombre ingresado: el motor compara también las rutas que atraviesan las ramificaciones."
+      : totalCarbons > chainLength && chainLength > 1
       ? ` Al recorrer también las ramificaciones aparece esta ruta más larga: una ruta de ${chainLength - 1} carbonos (${shorterSkeleton}) se descarta si existe una ruta continua de ${chainLength} (${parentSkeleton}). Ese cambio de cadena principal modifica todos los localizadores.`
       : " La cadena principal no se decide por la línea que parece más evidente en el dibujo: el motor compara todas las rutas continuas.";
-    parentExplanation = `Se elige la cadena continua más larga que contiene la función prioritaria cuando existe. La ruta seleccionada tiene ${chainLength} carbonos y su esqueleto es ${parentSkeleton}; por eso el nombre base resultante es ${analysis.chainName}.${hiddenChainReason}`;
+    const substituentLocants = analysis.substituents
+      .map((substituent) => substituent.locant)
+      .sort((left, right) => left - right);
+    const complexReclassificationReason = hasComplexReclassification
+      ? ` Se encontró ${reclassifiedComplexSubstituents.length === 1 ? "un sustituyente complejo" : "más de un sustituyente complejo"} (${joinSpanishList(reclassifiedComplexSubstituents)}) que pudo simplificarse. Al extender la cadena desde ${reclassifiedComplexSubstituents.length === 1 ? "ese sustituyente" : "esos sustituyentes"}, sus carbonos no desaparecen: el motor elige otra ruta continua y reordena los restantes. El nombre resultó ser ${parentSkeleton} (${chainLength} carbonos) con ${joinSpanishList(localizedSubstituents)}; el conjunto de localizadores ${substituentLocants.join(",")} es el más bajo posible.`
+      : "";
+    parentExplanation = `Se elige la cadena continua más larga que contiene la función prioritaria cuando existe. La ruta seleccionada tiene ${chainLength} carbonos y su esqueleto es ${parentSkeleton}; por eso el nombre base resultante es ${analysis.chainName}.${hiddenChainReason}${complexReclassificationReason}`;
   }
   steps.push({
     number: "02",
@@ -2669,22 +2718,6 @@ export function buildIupacReasoningSteps(
       explanation: explanationParts.join(" "),
     });
   }
-
-  const substituentGroups = new Map<string, { name: string; sortName: string; locants: number[] }>();
-  analysis.substituents.forEach((substituent) => {
-    const resolved = resolveSubstituentNaming(substituent, enabledAliasSet);
-    const key = `${resolved.sortName}:${resolved.name}`;
-    const current = substituentGroups.get(key) ?? {
-      name: resolved.name,
-      sortName: resolved.sortName,
-      locants: [],
-    };
-    current.locants.push(substituent.locant);
-    substituentGroups.set(key, current);
-  });
-  const localizedSubstituents = [...substituentGroups.values()]
-    .sort((left, right) => Math.min(...left.locants) - Math.min(...right.locants))
-    .map((group) => naturalLocalizedSubstituent(group.name, group.locants));
 
   if (localizedSubstituents.length) {
     const hierarchyReminder = primaryKind || hasMultipleBonds
@@ -3162,6 +3195,7 @@ export default function Home() {
   const [iupacInput, setIupacInput] = useState("");
   const [nameBuilderBusy, setNameBuilderBusy] = useState(false);
   const [nameBuilderFeedback, setNameBuilderFeedback] = useState<NameBuilderFeedback | null>(null);
+  const [reasoningSourceName, setReasoningSourceName] = useState<string | null>(null);
   const lastPersistedSignature = useRef("");
 
   const adjacency = useMemo(() => buildAdjacency(molecule), [molecule]);
@@ -3180,8 +3214,13 @@ export default function Home() {
     [analysis.mainChain, analysis.name, molecule],
   );
   const reasoningSteps = useMemo(
-    () => buildIupacReasoningSteps(molecule, analysis, commonAlkylNameSelections),
-    [analysis, commonAlkylNameSelections, molecule],
+    () => buildIupacReasoningSteps(
+      molecule,
+      analysis,
+      commonAlkylNameSelections,
+      reasoningSourceName,
+    ),
+    [analysis, commonAlkylNameSelections, molecule, reasoningSourceName],
   );
   const interactiveNameParts = useMemo(
     () => getInteractiveNameParts(
@@ -3457,6 +3496,7 @@ export default function Home() {
     setUndoStack((items) => [...items, cloneMolecule(molecule)]);
     setFuture([]);
     setMolecule(next);
+    setReasoningSourceName(null);
     setNotice(message);
   };
 
@@ -3516,6 +3556,7 @@ export default function Home() {
         next,
         `Estructura creada desde «${submittedName}». Puedes seguir editándola átomo por átomo.`,
       );
+      setReasoningSourceName(submittedName);
       setSelectedId(next.atoms[0].id);
       setCommonAlkylNameSelections(enabledAliases);
       setUseSimplifiedRingUnsaturationName(omittedRingLocant);
@@ -3900,6 +3941,7 @@ export default function Home() {
     setFuture((items) => [cloneMolecule(molecule), ...items]);
     setUndoStack((items) => items.slice(0, -1));
     setMolecule(cloneMolecule(previous));
+    setReasoningSourceName(null);
     setSelectedId(previous.atoms[0].id);
     setNotice("Último cambio deshecho.");
   };
@@ -3910,6 +3952,7 @@ export default function Home() {
     setUndoStack((items) => [...items, cloneMolecule(molecule)]);
     setFuture((items) => items.slice(1));
     setMolecule(cloneMolecule(next));
+    setReasoningSourceName(null);
     setSelectedId(next.atoms[0].id);
     setNotice("Cambio rehecho.");
   };
