@@ -4,10 +4,13 @@ import test from "node:test";
 import {
   clipSkeletalBondSegment,
   clipSkeletalParallelBondSegments,
+  clipSkeletalRingDoubleBondSegments,
+  getSkeletalRingNumberBadgeOffset,
   getSkeletalRingDoubleBondSegments,
   SKELETAL_BOND_END_CLEARANCE,
   SKELETAL_NUMBER_BADGE_CLEARANCE,
   SKELETAL_NUMBER_BADGE_OFFSET,
+  SKELETAL_RING_NUMBER_BADGE_DISTANCE,
 } from "../app/skeletal-bond-geometry.ts";
 
 const hexagon = Array.from({ length: 6 }, (_, index) => {
@@ -32,15 +35,20 @@ const projectedInset = (segment, start, end) => {
   return (segment.x - start.x) * normalX + (segment.y - start.y) * normalY;
 };
 
-test("places both cyclic double-bond strokes toward the ring interior", () => {
+test("keeps the outer cyclic stroke on the polygon edge and the second one inside", () => {
   const start = hexagon[0];
   const end = hexagon[1];
   const originalStart = { ...start };
   const originalEnd = { ...end };
   const [edge, inner] = getSkeletalRingDoubleBondSegments(start, end, hexagon);
 
-  assert.ok(projectedInset(edge, start, end) > 0);
+  assert.ok(Math.abs(projectedInset(edge, start, end)) < 1e-9);
   assert.ok(projectedInset(inner, start, end) > projectedInset(edge, start, end));
+  assert.ok(projectedInset(inner, start, end) <= 8.5 + 1e-9);
+  assert.deepEqual(
+    { x: edge.x, y: edge.y, x2: edge.x2, y2: edge.y2 },
+    { x: start.x, y: start.y, x2: end.x, y2: end.y },
+  );
   assert.deepEqual(start, originalStart);
   assert.deepEqual(end, originalEnd);
 });
@@ -63,6 +71,34 @@ test("trims the inner Kekulé stroke symmetrically at both endpoints", () => {
   assert.ok(innerLength < edgeLength);
   assert.equal(edge.role, "edge");
   assert.equal(inner.role, "inner");
+});
+
+test("places every cyclic number badge radially outside the ring", () => {
+  for (const vertex of hexagon) {
+    const offset = getSkeletalRingNumberBadgeOffset(vertex, hexagon);
+    const badgeCenter = { x: vertex.x + offset.x, y: vertex.y + offset.y };
+    const distance = Math.hypot(offset.x, offset.y);
+    const pointsAwayFromCenter = offset.x * -vertex.x + offset.y * -vertex.y;
+
+    assert.ok(Math.abs(distance - SKELETAL_RING_NUMBER_BADGE_DISTANCE) < 1e-9);
+    assert.ok(pointsAwayFromCenter < 0);
+    assert.ok(
+      Math.min(
+        distanceFromPointToSegment(badgeCenter, {
+          x: vertex.x,
+          y: vertex.y,
+          x2: hexagon[(hexagon.indexOf(vertex) + 1) % hexagon.length].x,
+          y2: hexagon[(hexagon.indexOf(vertex) + 1) % hexagon.length].y,
+        }),
+        distanceFromPointToSegment(badgeCenter, {
+          x: vertex.x,
+          y: vertex.y,
+          x2: hexagon[(hexagon.indexOf(vertex) + hexagon.length - 1) % hexagon.length].x,
+          y2: hexagon[(hexagon.indexOf(vertex) + hexagon.length - 1) % hexagon.length].y,
+        }),
+      ) >= SKELETAL_NUMBER_BADGE_CLEARANCE,
+    );
+  }
 });
 
 const projectedEndpointClearance = (segment, start, end) => {
@@ -120,18 +156,21 @@ test("clips both open-chain double-bond strokes by the node radius plus buffer",
   assert.deepEqual(end, originalEnd);
 });
 
-test("applies the same safe end caps to both Kekulé strokes in a ring", () => {
+test("aligns the outer ring stroke with a simple edge while keeping the inner cap", () => {
   const start = hexagon[0];
   const end = hexagon[1];
-  const segments = getSkeletalRingDoubleBondSegments(start, end, hexagon)
-    .map((segment) => clipSkeletalBondSegment(segment, start, end));
+  const [edge, inner] = clipSkeletalRingDoubleBondSegments(
+    getSkeletalRingDoubleBondSegments(start, end, hexagon),
+    start,
+    end,
+  );
+  const edgeClearance = projectedEndpointClearance(edge, start, end);
+  const innerClearance = projectedEndpointClearance(inner, start, end);
 
-  for (const segment of segments) {
-    const clearance = projectedEndpointClearance(segment, start, end);
-    assert.ok(clearance.start >= SKELETAL_BOND_END_CLEARANCE - 1e-9);
-    assert.ok(clearance.end >= SKELETAL_BOND_END_CLEARANCE - 1e-9);
-    assert.ok(Math.hypot(segment.x2 - segment.x, segment.y2 - segment.y) > 8);
-  }
+  assert.ok(Math.abs(edgeClearance.start) < 1e-9);
+  assert.ok(Math.abs(edgeClearance.end) < 1e-9);
+  assert.ok(innerClearance.start >= 10 - 1e-9);
+  assert.ok(innerClearance.end >= 10 - 1e-9);
 });
 
 test("keeps parallel open-chain strokes clear of the offset number badge", () => {
@@ -186,16 +225,12 @@ test("keeps both ring strokes clear of the numbered carbon circles", () => {
     { x: 112.58330249197701, y: -53 },
     { x: 0, y: -106 },
   ];
-  const startBadge = {
-    x: start.x + SKELETAL_NUMBER_BADGE_OFFSET.x,
-    y: start.y + SKELETAL_NUMBER_BADGE_OFFSET.y,
-  };
-  const endBadge = {
-    x: end.x + SKELETAL_NUMBER_BADGE_OFFSET.x,
-    y: end.y + SKELETAL_NUMBER_BADGE_OFFSET.y,
-  };
+  const startOffset = getSkeletalRingNumberBadgeOffset(start, ringPoints);
+  const endOffset = getSkeletalRingNumberBadgeOffset(end, ringPoints);
+  const startBadge = { x: start.x + startOffset.x, y: start.y + startOffset.y };
+  const endBadge = { x: end.x + endOffset.x, y: end.y + endOffset.y };
   const rawSegments = getSkeletalRingDoubleBondSegments(start, end, ringPoints);
-  const clipped = clipSkeletalParallelBondSegments(rawSegments, start, end, {
+  const clipped = clipSkeletalRingDoubleBondSegments(rawSegments, start, end, {
     startObstacle: { center: startBadge, radius: SKELETAL_NUMBER_BADGE_CLEARANCE },
     endObstacle: { center: endBadge, radius: SKELETAL_NUMBER_BADGE_CLEARANCE },
   });
@@ -208,4 +243,7 @@ test("keeps both ring strokes clear of the numbered carbon circles", () => {
       distanceFromPointToSegment(endBadge, segment) >= SKELETAL_NUMBER_BADGE_CLEARANCE - 1e-9,
     );
   }
+  const edgeClearance = projectedEndpointClearance(clipped[0], start, end);
+  assert.ok(Math.abs(edgeClearance.start) < 1e-9);
+  assert.ok(Math.abs(edgeClearance.end) < 1e-9);
 });

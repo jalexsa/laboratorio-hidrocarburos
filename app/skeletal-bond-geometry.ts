@@ -18,9 +18,33 @@ export const SKELETAL_NUMBER_BADGE_STROKE_WIDTH = 2.5;
 export const SKELETAL_NUMBER_BADGE_CLEARANCE = SKELETAL_NUMBER_BADGE_RADIUS
   + SKELETAL_NUMBER_BADGE_STROKE_WIDTH / 2
   + SKELETAL_BOND_END_BUFFER;
+export const SKELETAL_RING_NUMBER_BADGE_DISTANCE = 30;
 
 const clamp = (value: number, minimum: number, maximum: number) =>
   Math.min(maximum, Math.max(minimum, value));
+
+export function getSkeletalRingNumberBadgeOffset(
+  vertex: SkeletalPoint,
+  ringPoints: readonly SkeletalPoint[],
+): SkeletalPoint {
+  const ringCenter = ringPoints.reduce(
+    (center, point) => ({
+      x: center.x + point.x / Math.max(ringPoints.length, 1),
+      y: center.y + point.y / Math.max(ringPoints.length, 1),
+    }),
+    { x: 0, y: 0 },
+  );
+  const outwardX = vertex.x - ringCenter.x;
+  const outwardY = vertex.y - ringCenter.y;
+  const outwardLength = Math.hypot(outwardX, outwardY);
+
+  if (outwardLength === 0) return { ...SKELETAL_NUMBER_BADGE_OFFSET };
+
+  return {
+    x: outwardX / outwardLength * SKELETAL_RING_NUMBER_BADGE_DISTANCE,
+    y: outwardY / outwardLength * SKELETAL_RING_NUMBER_BADGE_DISTANCE,
+  };
+}
 
 /**
  * Recorta un trazo paralelo sin mover los átomos ni cambiar su inclinación.
@@ -165,6 +189,36 @@ export function clipSkeletalParallelBondSegments<
   ));
 }
 
+/**
+ * En los anillos la línea exterior forma parte del propio polígono: se deja
+ * llegar al vértice igual que un enlace simple. La línea interior conserva su
+ * recorte clásico y cada trazo se aparta de las insignias numeradas solo si su
+ * trayectoria realmente las cruza.
+ */
+export function clipSkeletalRingDoubleBondSegments(
+  segments: readonly SkeletalBondSegment[],
+  start: SkeletalPoint,
+  end: SkeletalPoint,
+  options: SkeletalParallelBondClipOptions = {},
+): SkeletalBondSegment[] {
+  return segments.map((segment) => {
+    const startClearance = options.startObstacle
+      ? getCircleEndClearance(segment, start, end, options.startObstacle, "start")
+      : 0;
+    const endClearance = options.endObstacle
+      ? getCircleEndClearance(segment, start, end, options.endObstacle, "end")
+      : 0;
+
+    return clipSkeletalBondSegment(
+      segment,
+      start,
+      end,
+      startClearance,
+      endClearance,
+    );
+  });
+}
+
 export function getSkeletalRingDoubleBondSegments(
   start: SkeletalPoint,
   end: SkeletalPoint,
@@ -196,19 +250,18 @@ export function getSkeletalRingDoubleBondSegments(
     inwardY *= -1;
   }
 
-  // La primera línea queda apenas dentro del perímetro para que su grosor no
-  // sobresalga; la segunda se centra más hacia el anillo y se recorta igual en
-  // ambos extremos, como en la representación clásica de Kekulé.
-  const edgeInset = clamp(length * 0.015, 2.4, 3.2);
-  const innerInset = clamp(length * 0.075, 10, 14);
-  const endpointTrim = clamp(length * 0.12, 14, 24);
+  // La línea exterior coincide con el lado geométrico del polígono. La línea
+  // interior queda a una distancia compacta (6,5–8,5 px entre ejes), suficiente
+  // para distinguir el doble enlace sin ensancharlo visualmente.
+  const innerInset = clamp(length * 0.055, 6.5, 8.5);
+  const endpointTrim = clamp(length * 0.09, 10, 18);
 
   return [
     {
-      x: start.x + inwardX * edgeInset,
-      y: start.y + inwardY * edgeInset,
-      x2: end.x + inwardX * edgeInset,
-      y2: end.y + inwardY * edgeInset,
+      x: start.x,
+      y: start.y,
+      x2: end.x,
+      y2: end.y,
       role: "edge",
     },
     {

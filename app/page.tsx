@@ -22,6 +22,8 @@ import {
 } from "./double-bond-stereochemistry";
 import {
   clipSkeletalParallelBondSegments,
+  clipSkeletalRingDoubleBondSegments,
+  getSkeletalRingNumberBadgeOffset,
   getSkeletalRingDoubleBondSegments,
   SKELETAL_NUMBER_BADGE_CLEARANCE,
   SKELETAL_NUMBER_BADGE_OFFSET,
@@ -4360,6 +4362,19 @@ export default function Home() {
   const displayPositions = new Map(
     molecule.atoms.map((atom) => [atom.id, getDisplayPosition(atom, viewMode, Boolean(molecule.rings?.length))]),
   );
+  const skeletalNumberBadgeOffsets = new Map(
+    molecule.atoms.map((atom) => {
+      const containingRing = molecule.rings?.find((ring) => ring.atomIds.includes(atom.id));
+      const position = displayPositions.get(atom.id)!;
+      const offset = containingRing
+        ? getSkeletalRingNumberBadgeOffset(
+            position,
+            containingRing.atomIds.map((atomId) => displayPositions.get(atomId)!),
+          )
+        : SKELETAL_NUMBER_BADGE_OFFSET;
+      return [atom.id, offset];
+    }),
+  );
   const coordinates = [...displayPositions.values()];
   const minX = Math.min(...coordinates.map((point) => point.x));
   const maxX = Math.max(...coordinates.map((point) => point.x));
@@ -4909,38 +4924,46 @@ export default function Home() {
                   y2: positionB.y + normalY * offset,
                   role: null,
                 }));
+                const bondClipOptions = {
+                  startObstacle: showNumbering
+                    && carbonCount > 1
+                    && isCarbonAtom(atomA)
+                    && analysis.numberedAtoms.has(a)
+                    ? {
+                        center: {
+                          x: positionA.x + skeletalNumberBadgeOffsets.get(a)!.x,
+                          y: positionA.y + skeletalNumberBadgeOffsets.get(a)!.y,
+                        },
+                        radius: SKELETAL_NUMBER_BADGE_CLEARANCE,
+                      }
+                    : undefined,
+                  endObstacle: showNumbering
+                    && carbonCount > 1
+                    && isCarbonAtom(atomB)
+                    && analysis.numberedAtoms.has(b)
+                    ? {
+                        center: {
+                          x: positionB.x + skeletalNumberBadgeOffsets.get(b)!.x,
+                          y: positionB.y + skeletalNumberBadgeOffsets.get(b)!.y,
+                        },
+                        radius: SKELETAL_NUMBER_BADGE_CLEARANCE,
+                      }
+                    : undefined,
+                };
                 const visibleBondSegments = viewMode === "skeletal" && order > 1
-                  ? clipSkeletalParallelBondSegments(
-                      rawBondSegments,
-                      positionA,
-                      positionB,
-                      {
-                        startObstacle: showNumbering
-                          && carbonCount > 1
-                          && isCarbonAtom(atomA)
-                          && analysis.numberedAtoms.has(a)
-                          ? {
-                              center: {
-                                x: positionA.x + SKELETAL_NUMBER_BADGE_OFFSET.x,
-                                y: positionA.y + SKELETAL_NUMBER_BADGE_OFFSET.y,
-                              },
-                              radius: SKELETAL_NUMBER_BADGE_CLEARANCE,
-                            }
-                          : undefined,
-                        endObstacle: showNumbering
-                          && carbonCount > 1
-                          && isCarbonAtom(atomB)
-                          && analysis.numberedAtoms.has(b)
-                          ? {
-                              center: {
-                                x: positionB.x + SKELETAL_NUMBER_BADGE_OFFSET.x,
-                                y: positionB.y + SKELETAL_NUMBER_BADGE_OFFSET.y,
-                              },
-                              radius: SKELETAL_NUMBER_BADGE_CLEARANCE,
-                            }
-                          : undefined,
-                      },
-                    )
+                  ? ringDoubleBondSegments
+                    ? clipSkeletalRingDoubleBondSegments(
+                        ringDoubleBondSegments,
+                        positionA,
+                        positionB,
+                        bondClipOptions,
+                      )
+                    : clipSkeletalParallelBondSegments(
+                        rawBondSegments,
+                        positionA,
+                        positionB,
+                        bondClipOptions,
+                      )
                   : rawBondSegments;
                 const lockedBond = isFunctionalBond
                   || containingRing?.kind === "aromatic"
@@ -5027,6 +5050,8 @@ export default function Home() {
                 const isSelected = atom.id === selectedAtom.id;
                 const chainNumber = analysis.numberedAtoms.get(atom.id);
                 const position = displayPositions.get(atom.id)!;
+                const numberBadgeOffset = skeletalNumberBadgeOffsets.get(atom.id)
+                  ?? SKELETAL_NUMBER_BADGE_OFFSET;
                 const atomLabel = carbonAtom
                   ? showHydrogens
                     ? hydrogenCount === 0
@@ -5072,7 +5097,7 @@ export default function Home() {
                         {showNumbering && chainNumber && carbonCount > 1 && (
                           <g
                             className="skeletal-number"
-                            transform={`translate(${SKELETAL_NUMBER_BADGE_OFFSET.x} ${SKELETAL_NUMBER_BADGE_OFFSET.y})`}
+                            transform={`translate(${numberBadgeOffset.x} ${numberBadgeOffset.y})`}
                           >
                             <circle className="number-circle" r="12" />
                             <text className="number-label" textAnchor="middle" dominantBaseline="central">{chainNumber}</text>
