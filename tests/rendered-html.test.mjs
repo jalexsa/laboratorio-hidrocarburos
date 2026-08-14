@@ -29,5 +29,11 @@ test("renders development preview metadata", async () => {
     response.headers.get("content-type") ?? "",
     /^text\/html\b/i,
   );
-  assert.match(await response.text(), developmentPreviewMeta);
+  const html = await response.text();
+  assert.match(html, developmentPreviewMeta);
+
+  const bondsLayerIndex = html.indexOf('class="molecule-bonds-layer"');
+  const nodesLayerIndex = html.indexOf('class="molecule-nodes-layer"');
+  assert.ok(bondsLayerIndex >= 0, "the SVG includes a dedicated bond layer");
+  assert.ok(nodesLayerIndex > bondsLayerIndex, "atom nodes render above every bond");
 });

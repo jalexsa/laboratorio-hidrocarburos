@@ -20,7 +20,12 @@ import {
   inspectDoubleBondStereochemistry,
   toggleDoubleBondGeometry,
 } from "./double-bond-stereochemistry";
-import { getSkeletalRingDoubleBondSegments } from "./skeletal-bond-geometry";
+import {
+  clipSkeletalParallelBondSegments,
+  getSkeletalRingDoubleBondSegments,
+  SKELETAL_NUMBER_BADGE_CLEARANCE,
+  SKELETAL_NUMBER_BADGE_OFFSET,
+} from "./skeletal-bond-geometry";
 
 type CarbonAtom = {
   id: number;
@@ -4869,6 +4874,7 @@ export default function Home() {
                 fill="url(#dotGrid)"
               />
 
+              <g className="molecule-bonds-layer">
               {molecule.bonds.map((bond) => {
                 const [a, b] = bond;
                 const order = getBondOrder(bond);
@@ -4896,13 +4902,46 @@ export default function Home() {
                     )
                   : null;
                 const offsets = order === 1 ? [0] : order === 2 ? [-5, 5] : [-8, 0, 8];
-                const visibleBondSegments = ringDoubleBondSegments ?? offsets.map((offset) => ({
+                const rawBondSegments = ringDoubleBondSegments ?? offsets.map((offset) => ({
                   x: positionA.x + normalX * offset,
                   y: positionA.y + normalY * offset,
                   x2: positionB.x + normalX * offset,
                   y2: positionB.y + normalY * offset,
                   role: null,
                 }));
+                const visibleBondSegments = viewMode === "skeletal" && order > 1
+                  ? clipSkeletalParallelBondSegments(
+                      rawBondSegments,
+                      positionA,
+                      positionB,
+                      {
+                        startObstacle: showNumbering
+                          && carbonCount > 1
+                          && isCarbonAtom(atomA)
+                          && analysis.numberedAtoms.has(a)
+                          ? {
+                              center: {
+                                x: positionA.x + SKELETAL_NUMBER_BADGE_OFFSET.x,
+                                y: positionA.y + SKELETAL_NUMBER_BADGE_OFFSET.y,
+                              },
+                              radius: SKELETAL_NUMBER_BADGE_CLEARANCE,
+                            }
+                          : undefined,
+                        endObstacle: showNumbering
+                          && carbonCount > 1
+                          && isCarbonAtom(atomB)
+                          && analysis.numberedAtoms.has(b)
+                          ? {
+                              center: {
+                                x: positionB.x + SKELETAL_NUMBER_BADGE_OFFSET.x,
+                                y: positionB.y + SKELETAL_NUMBER_BADGE_OFFSET.y,
+                              },
+                              radius: SKELETAL_NUMBER_BADGE_CLEARANCE,
+                            }
+                          : undefined,
+                      },
+                    )
+                  : rawBondSegments;
                 const lockedBond = isFunctionalBond
                   || containingRing?.kind === "aromatic"
                   || Boolean(molecule.rings?.length && !containingRing);
@@ -4978,7 +5017,9 @@ export default function Home() {
                   </g>
                 );
               })}
+              </g>
 
+              <g className="molecule-nodes-layer">
               {molecule.atoms.map((atom) => {
                 const element = getElement(atom);
                 const carbonAtom = isCarbonAtom(atom);
@@ -5029,7 +5070,10 @@ export default function Home() {
                           </g>
                         )}
                         {showNumbering && chainNumber && carbonCount > 1 && (
-                          <g className="skeletal-number" transform="translate(20 -22)">
+                          <g
+                            className="skeletal-number"
+                            transform={`translate(${SKELETAL_NUMBER_BADGE_OFFSET.x} ${SKELETAL_NUMBER_BADGE_OFFSET.y})`}
+                          >
                             <circle className="number-circle" r="12" />
                             <text className="number-label" textAnchor="middle" dominantBaseline="central">{chainNumber}</text>
                           </g>
@@ -5058,6 +5102,7 @@ export default function Home() {
                   </g>
                 );
               })}
+              </g>
             </svg>
 
             <div className={`structure-family-badge family-${analysis.family} ${analysis.functionalGroups.length ? "has-functional-group" : ""}`}>
