@@ -15,6 +15,7 @@ import {
 } from "./opsin-name-resolver";
 import {
   formatStereochemicalName,
+  getMainChainStereoDescriptors,
   inspectDoubleBondStereochemistry,
   toggleDoubleBondGeometry,
 } from "./double-bond-stereochemistry";
@@ -162,6 +163,12 @@ type Analysis = {
   functionalGroups: FunctionalGroup[];
   primaryFunctionalGroup?: FunctionalGroupKind;
   primaryFunctionalLabel?: string;
+};
+
+export type IupacReasoningStep = {
+  number: "01" | "02" | "03" | "04" | "05" | "06";
+  title: string;
+  explanation: string;
 };
 
 const alkaneRoots = [
@@ -2411,6 +2418,147 @@ export function analyzeMolecule(molecule: Molecule, enabledAliases: readonly str
   return analyzeFunctionalAcyclic(molecule, skeleton, groups, primaryKind, enabledAliases);
 }
 
+function joinSpanishList(items: string[]) {
+  if (items.length <= 1) return items[0] ?? "";
+  if (items.length === 2) return `${items[0]} y ${items[1]}`;
+  return `${items.slice(0, -1).join(", ")} y ${items.at(-1)}`;
+}
+
+function locantPhrase(locants: number[]) {
+  const unique = [...new Set(locants)].sort((left, right) => left - right);
+  if (!unique.length) return "el localizador más bajo posible";
+  return unique.length === 1
+    ? `el localizador ${unique[0]}`
+    : `los localizadores ${joinSpanishList(unique.map(String))}`;
+}
+
+export function buildIupacReasoningSteps(
+  molecule: Molecule,
+  analysis: Analysis,
+  enabledAliases: readonly string[] = [],
+): IupacReasoningStep[] {
+  const steps: IupacReasoningStep[] = [];
+  const isRingStructure = analysis.family !== "acyclic";
+  const hasMultipleBonds = analysis.doubleBondLocants.length > 0
+    || analysis.tripleBondLocants.length > 0;
+  const enabledAliasSet = new Set(enabledAliases);
+
+  if (analysis.primaryFunctionalGroup && analysis.primaryFunctionalLabel) {
+    const primaryKind = analysis.primaryFunctionalGroup;
+    const detectedLabels = [...new Set(analysis.functionalGroups.map((group) => group.label.toLowerCase()))];
+    const primaryGroups = analysis.functionalGroups.filter((group) => group.kind === primaryKind);
+    const primaryLocants = primaryGroups.flatMap((group) => group.carbonIds
+      .map((atomId) => analysis.numberedAtoms.get(atomId))
+      .filter((locant): locant is number => Boolean(locant)));
+    const ownsParentCarbon = new Set<FunctionalGroupKind>([
+      "carboxylicAcid",
+      "ester",
+      "amide",
+      "aldehyde",
+    ]).has(primaryKind);
+    const priorityLead = detectedLabels.length > 1
+      ? `Entre ${joinSpanishList(detectedLabels)}, ${analysis.primaryFunctionalLabel.toLowerCase()} tiene la prioridad más alta.`
+      : `Se identifica ${analysis.primaryFunctionalLabel.toLowerCase()} como el grupo de mayor prioridad.`;
+    const numberingRule = ownsParentCarbon
+      ? `Su carbono forma parte del esqueleto principal y recibe ${locantPhrase(primaryLocants)}.`
+      : `La numeración se orienta para que el carbono unido a este grupo reciba ${locantPhrase(primaryLocants)}.`;
+    steps.push({
+      number: "01",
+      title: "Grupo funcional principal",
+      explanation: `${priorityLead} Aporta el sufijo del nombre; ${numberingRule.toLowerCase()}`,
+    });
+  }
+
+  let parentExplanation: string;
+  if (analysis.family === "aromatic") {
+    parentExplanation = `Se elige el anillo aromático de ${analysis.mainChain.length} carbonos que contiene la función prioritaria cuando existe. Este núcleo aporta el nombre base ${analysis.chainName}.`;
+  } else if (analysis.family === "polycyclic") {
+    parentExplanation = `Se comparan los anillos del sistema y se elige como principal el que conserva la función prioritaria y el mayor número de conexiones. El esqueleto seleccionado aporta ${analysis.chainName}.`;
+  } else if (analysis.family === "cycloalkane") {
+    parentExplanation = `Se elige el anillo continuo de ${analysis.mainChain.length} carbonos${analysis.primaryFunctionalLabel ? ` que contiene el grupo ${analysis.primaryFunctionalLabel.toLowerCase()}` : ""}. Este anillo aporta el nombre base ${analysis.chainName}.`;
+  } else {
+    parentExplanation = `Se elige una cadena continua de ${analysis.mainChain.length} carbonos${analysis.primaryFunctionalLabel ? ` que contiene el grupo ${analysis.primaryFunctionalLabel.toLowerCase()}` : ""}. Es la cadena más larga compatible con la función principal y aporta el nombre base ${analysis.chainName}.`;
+  }
+  steps.push({
+    number: "02",
+    title: isRingStructure ? "Anillo principal" : "Cadena principal",
+    explanation: parentExplanation,
+  });
+
+  if (hasMultipleBonds) {
+    const bondDetails = [
+      analysis.doubleBondLocants.length
+        ? `${analysis.doubleBondLocants.length === 1 ? "el doble enlace" : "los dobles enlaces"} en ${joinSpanishList(analysis.doubleBondLocants.map((locant) => `C${locant}`))}`
+        : "",
+      analysis.tripleBondLocants.length
+        ? `${analysis.tripleBondLocants.length === 1 ? "el triple enlace" : "los triples enlaces"} en ${joinSpanishList(analysis.tripleBondLocants.map((locant) => `C${locant}`))}`
+        : "",
+    ].filter(Boolean);
+    const tieRule = analysis.doubleBondLocants.length && analysis.tripleBondLocants.length
+      ? " Si ambos conjuntos empatan, el doble enlace recibe el localizador más bajo."
+      : " La numeración conserva para estos enlaces el conjunto de localizadores más bajo.";
+    steps.push({
+      number: "03",
+      title: "Enlaces múltiples",
+      explanation: `Se localizan ${joinSpanishList(bondDetails)}.${tieRule}`,
+    });
+  }
+
+  const substituentGroups = new Map<string, { name: string; sortName: string; locants: number[] }>();
+  analysis.substituents.forEach((substituent) => {
+    const resolved = resolveSubstituentNaming(substituent, enabledAliasSet);
+    const key = `${resolved.sortName}:${resolved.name}`;
+    const current = substituentGroups.get(key) ?? {
+      name: resolved.name,
+      sortName: resolved.sortName,
+      locants: [],
+    };
+    current.locants.push(substituent.locant);
+    substituentGroups.set(key, current);
+  });
+  const localizedSubstituents = [...substituentGroups.values()]
+    .sort((left, right) => Math.min(...left.locants) - Math.min(...right.locants))
+    .map((group) => `${group.name} en ${joinSpanishList([...group.locants]
+      .sort((left, right) => left - right)
+      .map((locant) => `C${locant}`))}`);
+
+  if (localizedSubstituents.length) {
+    steps.push({
+      number: "04",
+      title: "Sustituyentes y localizadores",
+      explanation: `Se orienta ${isRingStructure ? "el anillo" : "la cadena"} para obtener el conjunto de números más bajo. En esta estructura se ubica ${joinSpanishList(localizedSubstituents)}.`,
+    });
+  }
+
+  if (substituentGroups.size > 1) {
+    const alphabeticalNames = [...substituentGroups.values()]
+      .sort((left, right) => compareAlphabeticalNames(left.sortName, right.sortName))
+      .map((group) => group.name);
+    steps.push({
+      number: "05",
+      title: "Orden alfabético",
+      explanation: `Los sustituyentes se escriben como ${alphabeticalNames.join(" → ")}. Para ordenar se ignoran di-, tri-, tetra-, sec- y tert-.`,
+    });
+  }
+
+  const stereoDescriptors = getMainChainStereoDescriptors(molecule, analysis.mainChain);
+  if (stereoDescriptors.length) {
+    const descriptorDetails = stereoDescriptors.map((descriptor) => {
+      const geometry = descriptor.configuration === "E"
+        ? "lados opuestos"
+        : "el mismo lado";
+      return `C${descriptor.locant}=C${descriptor.locant + 1} es ${descriptor.locant}${descriptor.configuration}: los sustituyentes de mayor prioridad quedan en ${geometry}`;
+    });
+    steps.push({
+      number: "06",
+      title: "Estereoquímica (E/Z o R/S)",
+      explanation: `Se aplican las reglas CIP. ${descriptorDetails.join("; ")}.`,
+    });
+  }
+
+  return steps;
+}
+
 const directionOptions = [
   { label: "Arriba", symbol: "↑", dx: 0, dy: -1, className: "north" },
   { label: "Izquierda", symbol: "←", dx: -1, dy: 0, className: "west" },
@@ -2823,6 +2971,7 @@ export default function Home() {
   const [viewMode, setViewMode] = useState<ViewMode>("condensed");
   const [newBondOrder, setNewBondOrder] = useState<BondOrder>(1);
   const [showIupacName, setShowIupacName] = useState(true);
+  const [showReasoningHelp, setShowReasoningHelp] = useState(true);
   const [showAlkylPalette, setShowAlkylPalette] = useState(false);
   const [showRingPalette, setShowRingPalette] = useState(false);
   const [showFunctionalPalette, setShowFunctionalPalette] = useState(false);
@@ -2853,6 +3002,10 @@ export default function Home() {
   const stereochemicalName = useMemo(
     () => formatStereochemicalName(molecule, analysis.mainChain, analysis.name),
     [analysis.mainChain, analysis.name, molecule],
+  );
+  const reasoningSteps = useMemo(
+    () => buildIupacReasoningSteps(molecule, analysis, commonAlkylNameSelections),
+    [analysis, commonAlkylNameSelections, molecule],
   );
   const interactiveNameParts = useMemo(
     () => getInteractiveNameParts(
@@ -3953,75 +4106,6 @@ export default function Home() {
     : themePreference === "dark"
       ? "Oscuro"
       : "Claro";
-  const multipleBondSummary = [
-    analysis.doubleBondLocants.length
-      ? `${analysis.doubleBondLocants.length === 1 ? "doble" : "dobles"} en ${analysis.doubleBondLocants.join(",")}`
-      : "",
-    analysis.tripleBondLocants.length
-      ? `${analysis.tripleBondLocants.length === 1 ? "triple" : "triples"} en ${analysis.tripleBondLocants.join(",")}`
-      : "",
-  ].filter(Boolean).join(" y ");
-  const primaryStructureTitle = analysis.primaryFunctionalLabel
-    ? "Grupo funcional principal"
-    : analysis.functionalGroups.length
-      ? "Grupo funcional"
-    : analysis.family === "aromatic"
-    ? "Núcleo aromático"
-    : analysis.family === "polycyclic"
-      ? "Sistema de anillos"
-    : analysis.family === "cycloalkane"
-      ? "Anillo principal"
-      : "Cadena principal";
-  const primaryStructureExplanation = analysis.primaryFunctionalLabel
-    ? `Se reconoce ${analysis.primaryFunctionalLabel.toLowerCase()} como el grupo de mayor prioridad. Este grupo determina el nombre base: ${analysis.chainName}.`
-    : analysis.functionalGroups.length
-      ? `La estructura contiene ${analysis.functionalGroups.map((group) => group.label.toLowerCase()).join(" y ")}; se expresan como prefijos sobre ${analysis.chainName}.`
-    : analysis.family === "aromatic"
-    ? "El anillo de seis carbonos con tres enlaces alternados se reconoce como el núcleo benceno."
-    : analysis.family === "polycyclic"
-      ? `La estructura contiene ${molecule.rings?.length ?? 0} anillos. Se toma como principal el que reúne más conexiones y aporta el nombre base: ${analysis.chainName}.`
-    : analysis.family === "cycloalkane"
-      ? `El ciclo contiene ${analysis.mainChain.length} carbonos${hasMultipleBonds ? ` e incluye enlaces ${multipleBondSummary}` : ""}; aporta el nombre base: ${analysis.chainName}.`
-      : `La cadena elegida tiene ${analysis.mainChain.length} carbonos${hasMultipleBonds ? ` e incluye enlaces ${multipleBondSummary}` : ""}: ${analysis.chainName}.`;
-  const numberingExplanation = analysis.primaryFunctionalLabel
-    ? `La cadena o el anillo se orienta para entregar el localizador más bajo al grupo ${analysis.primaryFunctionalLabel.toLowerCase()}, antes que a enlaces múltiples y sustituyentes.`
-    : isRingStructure
-    ? hasMultipleBonds
-      ? "El anillo se numera desde un enlace múltiple y en el sentido que entrega los localizadores más bajos a dobles y triples enlaces."
-      : analysis.substituents.length
-        ? "Se inicia en un carbono sustituido y se recorre el anillo en el sentido que produce el conjunto de localizadores más bajo."
-        : "Sin sustituyentes, todos los carbonos del anillo son equivalentes; la numeración mostrada sirve como referencia."
-    : hasMultipleBonds
-      ? "Se numera desde el extremo que entrega los localizadores más bajos a los enlaces múltiples."
-      : "Se escoge el extremo que entrega el conjunto de localizadores más bajo.";
-  const namingRuleTitle = analysis.primaryFunctionalLabel
-    ? "Prioridad funcional"
-    : analysis.functionalGroups.length
-      ? "Prefijos funcionales"
-    : analysis.family === "aromatic"
-    ? "Aromaticidad"
-    : analysis.family === "polycyclic"
-      ? "Anillos como sustituyentes"
-    : analysis.family === "cycloalkane"
-      ? hasMultipleBonds ? "Insaturación del ciclo" : "Prefijo ciclo-"
-      : hasMultipleBonds
-        ? "Prioridad de insaturación"
-        : "Orden alfabético";
-  const namingRuleExplanation = analysis.primaryFunctionalLabel
-    ? `El grupo ${analysis.primaryFunctionalLabel.toLowerCase()} aporta el sufijo principal; los grupos de menor prioridad se nombran como prefijos.`
-    : analysis.functionalGroups.length
-      ? "Los halógenos y grupos alcoxi se indican como sustituyentes con su localizador correspondiente."
-    : analysis.family === "aromatic"
-    ? "Los enlaces alternados representan los seis electrones π deslocalizados del anillo de benceno."
-    : analysis.family === "polycyclic"
-      ? "Un benceno unido como sustituyente se denomina fenil; un cicloalcano unido se nombra cicloalquil."
-    : analysis.family === "cycloalkane"
-      ? hasMultipleBonds
-        ? "Los enlaces múltiples reciben los localizadores más bajos y cambian la terminación a -eno o -ino."
-        : "El nombre del alcano con igual número de carbonos recibe el prefijo ciclo-."
-      : hasMultipleBonds
-        ? "La cadena principal conserva el mayor número posible de enlaces dobles y triples."
-        : "Los sustituyentes se ordenan por el nombre mostrado; di-, tri- y tetra- no se consideran al alfabetizar.";
 
   return (
     <main className="app-shell">
@@ -5147,32 +5231,51 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="reasoning-section">
-            <h3>Cómo se obtiene</h3>
-            <ol>
-              <li>
-                <span>01</span>
-                <div>
-                  <strong>{primaryStructureTitle}</strong>
-                  <p>{primaryStructureExplanation}</p>
-                </div>
-              </li>
-              <li>
-                <span>02</span>
-                <div>
-                  <strong>Numeración</strong>
-                  <p>{numberingExplanation}</p>
-                </div>
-              </li>
-            </ol>
-          </div>
+          <div className={`reasoning-section ${showReasoningHelp ? "expanded" : "collapsed"}`}>
+            <div className="reasoning-heading">
+              <div>
+                <h3>Cómo se obtiene</h3>
+                <span>{showReasoningHelp ? "Prioridades que aplican" : "Modo examen"}</span>
+              </div>
+              <button
+                type="button"
+                className="reasoning-visibility-button"
+                aria-label={showReasoningHelp ? "Ocultar ayuda de nomenclatura" : "Mostrar ayuda de nomenclatura"}
+                aria-expanded={showReasoningHelp}
+                aria-controls="iupac-reasoning-content"
+                onClick={() => {
+                  setShowReasoningHelp((visible) => !visible);
+                  setNotice(
+                    showReasoningHelp
+                      ? "Ayuda de nomenclatura oculta: modo examen activado."
+                      : "Ayuda de nomenclatura visible nuevamente.",
+                  );
+                }}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M2.7 12s3.4-5.2 9.3-5.2 9.3 5.2 9.3 5.2-3.4 5.2-9.3 5.2S2.7 12 2.7 12Z" />
+                  <circle cx="12" cy="12" r="2.7" />
+                  {!showReasoningHelp && <path className="eye-slash" d="m4 4 16 16" />}
+                </svg>
+                <span>{showReasoningHelp ? "Ocultar ayuda" : "Mostrar ayuda"}</span>
+              </button>
+            </div>
 
-          <div className="naming-rule">
-            <span aria-hidden="true">✓</span>
-            <p>
-              <strong>{namingRuleTitle}</strong>
-              {namingRuleExplanation}
-            </p>
+            <div className="reasoning-collapse" aria-hidden={!showReasoningHelp}>
+              <div id="iupac-reasoning-content">
+                <ol>
+                  {reasoningSteps.map((step) => (
+                    <li key={step.number}>
+                      <span>{step.number}</span>
+                      <div>
+                        <strong>{step.title}</strong>
+                        <p>{step.explanation}</p>
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            </div>
           </div>
         </aside>
       </div>

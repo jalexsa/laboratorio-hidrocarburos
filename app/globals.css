@@ -2343,13 +2343,108 @@ button {
 }
 
 .reasoning-section {
-  padding: 20px 21px 0;
+  margin: 18px 20px 0;
+  padding: 14px;
+  border: 1px solid #e0e4e3;
+  border-radius: 15px;
+  background: #f7f8f8;
+  transition: border-color 220ms ease, background 220ms ease;
 }
 
-.reasoning-section h3 {
-  margin: 0 0 13px;
+.reasoning-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.reasoning-heading h3 {
+  margin: 0;
+  color: #3f4745;
   font-family: Georgia, "Times New Roman", serif;
   font-size: 16px;
+}
+
+.reasoning-heading > div > span {
+  display: block;
+  margin-top: 3px;
+  color: #8a9290;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.reasoning-visibility-button {
+  display: inline-flex;
+  min-height: 30px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px;
+  border: 1px solid #d4d9d7;
+  border-radius: 9px;
+  background: #fcfcfc;
+  color: #626b68;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 800;
+  transition: border-color 180ms ease, background 180ms ease, color 180ms ease;
+}
+
+.reasoning-visibility-button:hover {
+  border-color: #b7bfbc;
+  background: #f0f2f1;
+  color: #424a47;
+}
+
+.reasoning-visibility-button:focus-visible {
+  outline: 2px solid #7d8985;
+  outline-offset: 2px;
+}
+
+.reasoning-visibility-button svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.reasoning-visibility-button .eye-slash {
+  stroke-width: 2;
+}
+
+.reasoning-collapse {
+  display: grid;
+  grid-template-rows: 1fr;
+  margin-top: 13px;
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    grid-template-rows 280ms ease,
+    margin-top 280ms ease,
+    opacity 220ms ease,
+    transform 280ms ease;
+}
+
+.reasoning-collapse > div {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.reasoning-section.collapsed {
+  border-color: #e6e8e7;
+  background: #fafafa;
+}
+
+.reasoning-section.collapsed .reasoning-collapse {
+  grid-template-rows: 0fr;
+  margin-top: 0;
+  opacity: 0;
+  transform: translateY(-4px);
 }
 
 .reasoning-section ol {
@@ -2372,10 +2467,10 @@ button {
   place-items: center;
   width: 25px;
   height: 25px;
-  border: 1px solid #d4e2de;
+  border: 1px solid #d8dcdb;
   border-radius: 8px;
-  background: #f5f9f7;
-  color: #4b766c;
+  background: #ecefee;
+  color: #626a68;
   font-size: 9px;
   font-weight: 800;
 }
@@ -2383,19 +2478,19 @@ button {
 .reasoning-section strong {
   display: block;
   margin-bottom: 3px;
-  color: #334f49;
+  color: #424a47;
   font-size: 12px;
 }
 
 .reasoning-section p {
   margin: 0;
-  color: #687b76;
+  color: #707876;
   font-size: 11px;
   line-height: 1.5;
 }
 
 .reasoning-section p b {
-  color: #345c53;
+  color: #4e5754;
 }
 
 .substituent-list {
@@ -2609,8 +2704,7 @@ button:focus-visible,
     grid-column: 1;
   }
 
-  .reasoning-section,
-  .naming-rule {
+  .reasoning-section {
     grid-column: 2;
   }
 
@@ -2628,7 +2722,8 @@ button:focus-visible,
 
   .reasoning-section {
     grid-row: 1 / span 3;
-    padding-top: 24px;
+    margin: 20px 20px 20px 0;
+    padding: 14px;
   }
 
   .naming-rule {
@@ -2801,8 +2896,7 @@ button:focus-visible,
   .analysis-heading,
   .name-result,
   .formula-row,
-  .reasoning-section,
-  .naming-rule {
+  .reasoning-section {
     grid-column: auto;
   }
 
@@ -2822,8 +2916,8 @@ button:focus-visible,
   }
 
   .reasoning-section {
-    padding-left: 18px;
-    padding-right: 18px;
+    margin: 18px 16px 0;
+    padding: 14px;
   }
 
   .naming-rule {
@@ -2855,6 +2949,16 @@ button:focus-visible,
 }
 
 @media (max-width: 460px) {
+  .reasoning-visibility-button {
+    width: 32px;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .reasoning-visibility-button > span {
+    display: none;
+  }
+
   .brand-copy p {
     font-size: 9px;
   }
@@ -4000,10 +4104,36 @@ html[data-theme="dark"] .naming-rule {
   background: #15231f;
 }
 
+html[data-theme="dark"] .reasoning-section,
+html[data-theme="dark"] .reasoning-section.collapsed {
+  border-color: #39423f;
+  background: #1b2220;
+}
+
+html[data-theme="dark"] .reasoning-heading h3 {
+  color: #dce1df;
+}
+
+html[data-theme="dark"] .reasoning-heading > div > span {
+  color: #8d9693;
+}
+
+html[data-theme="dark"] .reasoning-visibility-button {
+  border-color: #444d4a;
+  background: #242b29;
+  color: #b7bfbc;
+}
+
+html[data-theme="dark"] .reasoning-visibility-button:hover {
+  border-color: #5d6864;
+  background: #303936;
+  color: #e0e5e3;
+}
+
 html[data-theme="dark"] .reasoning-section li > span {
-  border-color: #3b514b;
-  background: #1a2b26;
-  color: #8bc9b6;
+  border-color: #444c49;
+  background: #2a312f;
+  color: #b6bdbb;
 }
 
 html[data-theme="dark"] .naming-rule {
