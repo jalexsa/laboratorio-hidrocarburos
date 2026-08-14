@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   formatStereochemicalName,
+  getAromaticStereochemicalNameOptions,
   getMainChainStereoDescriptors,
   inspectDoubleBondStereochemistry,
   toggleDoubleBondGeometry,
@@ -96,5 +97,26 @@ test("places stereodescriptors after the acid class name", () => {
       "ácido hex-3-enoico",
     ),
     "ácido (3E)-hex-3-enoico",
+  );
+});
+
+test("offers a clean default and a technical E/Z view for aromatic names", () => {
+  assert.deepEqual(
+    getAromaticStereochemicalNameOptions(
+      "(1E,3E,5E)-benceno-1,3,5-triol",
+      "aromatic",
+    ),
+    {
+      standardName: "benceno-1,3,5-triol",
+      technicalName: "(1E,3E,5E)-benceno-1,3,5-triol",
+      descriptors: ["1E", "3E", "5E"],
+    },
+  );
+});
+
+test("does not hide E/Z descriptors from non-aromatic alkenes", () => {
+  assert.equal(
+    getAromaticStereochemicalNameOptions("(3E)-hex-3-eno", "acyclic"),
+    null,
   );
 });

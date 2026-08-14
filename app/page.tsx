@@ -15,6 +15,7 @@ import {
 } from "./opsin-name-resolver";
 import {
   formatStereochemicalName,
+  getAromaticStereochemicalNameOptions,
   getMainChainStereoDescriptors,
   inspectDoubleBondStereochemistry,
   toggleDoubleBondGeometry,
@@ -3187,6 +3188,7 @@ export default function Home() {
   const [ringInsertMode, setRingInsertMode] = useState<RingInsertMode>("replace");
   const [commonAlkylNameSelections, setCommonAlkylNameSelections] = useState<string[]>([]);
   const [useSimplifiedRingUnsaturationName, setUseSimplifiedRingUnsaturationName] = useState(false);
+  const [technicalAromaticMolecule, setTechnicalAromaticMolecule] = useState<Molecule | null>(null);
   const [themePreference, setThemePreference] = useState<ThemePreference>("auto");
   const [automaticDark, setAutomaticDark] = useState(false);
   const [showCreatorCredit, setShowCreatorCredit] = useState(false);
@@ -3213,6 +3215,18 @@ export default function Home() {
     () => formatStereochemicalName(molecule, analysis.mainChain, analysis.name),
     [analysis.mainChain, analysis.name, molecule],
   );
+  const aromaticStereochemicalNames = useMemo(
+    () => getAromaticStereochemicalNameOptions(stereochemicalName, analysis.family),
+    [analysis.family, stereochemicalName],
+  );
+  const showAromaticTechnicalName = Boolean(
+    aromaticStereochemicalNames && technicalAromaticMolecule === molecule,
+  );
+  const visibleStereochemicalName = showAromaticTechnicalName
+    ? aromaticStereochemicalNames!.technicalName
+    : aromaticStereochemicalNames?.standardName ?? stereochemicalName;
+  const canonicalStereochemicalName = aromaticStereochemicalNames?.standardName
+    ?? stereochemicalName;
   const reasoningSteps = useMemo(
     () => buildIupacReasoningSteps(
       molecule,
@@ -3224,7 +3238,7 @@ export default function Home() {
   );
   const interactiveNameParts = useMemo(
     () => getInteractiveNameParts(
-      stereochemicalName,
+      visibleStereochemicalName,
       commonAlkylNameSelections,
       ringUnsaturationNameOption,
       useSimplifiedRingUnsaturationName,
@@ -3232,11 +3246,26 @@ export default function Home() {
     [
       commonAlkylNameSelections,
       ringUnsaturationNameOption,
-      stereochemicalName,
+      useSimplifiedRingUnsaturationName,
+      visibleStereochemicalName,
+    ],
+  );
+  const canonicalNameParts = useMemo(
+    () => getInteractiveNameParts(
+      canonicalStereochemicalName,
+      commonAlkylNameSelections,
+      ringUnsaturationNameOption,
+      useSimplifiedRingUnsaturationName,
+    ),
+    [
+      canonicalStereochemicalName,
+      commonAlkylNameSelections,
+      ringUnsaturationNameOption,
       useSimplifiedRingUnsaturationName,
     ],
   );
   const displayedIupacName = interactiveNameParts.map((part) => part.text).join("");
+  const canonicalIupacName = canonicalNameParts.map((part) => part.text).join("");
   const hasInteractiveAlkylName = interactiveNameParts.some((part) => part.systematic);
   const hasInteractiveRingName = interactiveNameParts.some((part) => part.ringSystematic);
   const isDarkTheme = themePreference === "dark" || (themePreference === "auto" && automaticDark);
@@ -3420,7 +3449,7 @@ export default function Home() {
       if (usesLocalLibrary()) {
         try {
           const entry = saveLocalHistoryEntry({
-            name: displayedIupacName,
+            name: canonicalIupacName,
             formula: analysis.formula,
             family: historyFamilyLabel,
             molecule,
@@ -3443,7 +3472,7 @@ export default function Home() {
           "x-lab-visitor-id": historyIdentity,
         },
         body: JSON.stringify({
-          name: displayedIupacName,
+          name: canonicalIupacName,
           formula: analysis.formula,
           family: historyFamilyLabel,
           molecule,
@@ -3482,7 +3511,7 @@ export default function Home() {
     return () => window.clearTimeout(timer);
   }, [
     analysis.formula,
-    displayedIupacName,
+    canonicalIupacName,
     historyFamilyLabel,
     historyClearing,
     historyIdentity,
@@ -3963,14 +3992,14 @@ export default function Home() {
     try {
       if (usesLocalLibrary()) {
         const item = saveLocalSavedEntry({
-          name: displayedIupacName,
+          name: canonicalIupacName,
           formula: analysis.formula,
           family: historyFamilyLabel,
           molecule,
           viewMode,
         });
         setSavedEntries((items) => mergeHistoryEntry(items, item, 200));
-        setNotice(`${displayedIupacName} quedó añadido a Guardados.`);
+        setNotice(`${canonicalIupacName} quedó añadido a Guardados.`);
         setLibrarySection("saved");
         setHistoryOpen(true);
         return;
@@ -3982,7 +4011,7 @@ export default function Home() {
           "x-lab-visitor-id": historyIdentity,
         },
         body: JSON.stringify({
-          name: displayedIupacName,
+          name: canonicalIupacName,
           formula: analysis.formula,
           family: historyFamilyLabel,
           molecule,
@@ -4000,7 +4029,7 @@ export default function Home() {
       }
       const scope = data.scope ?? historyScope;
       setHistoryScope(scope);
-      setNotice(`${displayedIupacName} quedó añadido a Guardados.`);
+      setNotice(`${canonicalIupacName} quedó añadido a Guardados.`);
       setLibrarySection("saved");
       setHistoryOpen(true);
     } catch (error) {
@@ -4557,7 +4586,7 @@ export default function Home() {
                 <MoleculeHistoryPreview molecule={molecule} />
                 <div>
                   <span>Estructura actual</span>
-                  <strong>{displayedIupacName}</strong>
+                  <strong>{canonicalIupacName}</strong>
                   <small>{analysis.formula} · {historyFamilyLabel}</small>
                 </div>
                 <button onClick={saveCurrentStructure} disabled={!historyIdentity || savedBusy}>
@@ -5444,6 +5473,31 @@ export default function Home() {
                         >
                           {part.text}
                         </button>
+                      ) : aromaticStereochemicalNames ? (
+                        <button
+                          className={`aromatic-name-toggle ${showAromaticTechnicalName ? "technical-active" : ""}`}
+                          key={`aromatic-name-${index}`}
+                          type="button"
+                          aria-pressed={showAromaticTechnicalName}
+                          aria-label={showAromaticTechnicalName
+                            ? "Mostrar el nombre habitual sin descriptores E/Z"
+                            : "Mostrar el nombre técnico con descriptores E/Z"}
+                          title={showAromaticTechnicalName
+                            ? "Volver al nombre habitual"
+                            : "Ver la representación técnica del motor"}
+                          onClick={() => {
+                            setTechnicalAromaticMolecule((current) =>
+                              current === molecule ? null : molecule,
+                            );
+                            setNotice(
+                              showAromaticTechnicalName
+                                ? "Nombre aromático habitual: se omiten los descriptores de la forma de Kekulé."
+                                : "Nombre técnico visible: muestra los descriptores que calcula el motor para los dobles enlaces alternados.",
+                            );
+                          }}
+                        >
+                          {part.text}
+                        </button>
                       ) : (
                         <span key={`name-part-${index}`}>{part.text}</span>
                       ),
@@ -5457,6 +5511,18 @@ export default function Home() {
                     : hasInteractiveRingName
                       ? "Pulsa el nombre del ciclo para mostrar u omitir el localizador 1."
                       : "Pulsa el sustituyente destacado para cambiar su forma; el orden alfabético se recalcula automáticamente."}
+                </small>
+              )}
+              {showIupacName && aromaticStereochemicalNames && (
+                <small className="aromatic-name-help">
+                  {showAromaticTechnicalName
+                    ? "Pulsa el nombre para volver a la forma habitual de examen."
+                    : "Pulsa el nombre para consultar la forma técnica que interpreta el motor."}
+                </small>
+              )}
+              {showIupacName && aromaticStereochemicalNames && showAromaticTechnicalName && (
+                <small className="aromatic-technical-note" role="note">
+                  Estos descriptores reflejan cómo el motor geométrico codifica una forma de Kekulé del anillo con dobles enlaces alternados. No representan estructuras de resonancia distintas y, en la nomenclatura habitual, se omiten.
                 </small>
               )}
               {showIupacName && analysis.commonName && (

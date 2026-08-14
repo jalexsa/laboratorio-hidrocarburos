@@ -2263,6 +2263,37 @@ button {
   color: #176754;
 }
 
+.aromatic-name-toggle {
+  display: inline;
+  width: auto;
+  height: auto;
+  margin: 0;
+  padding: 1px 3px 2px;
+  border: 0;
+  border-bottom: 2px dotted #5e8f82;
+  border-radius: 5px;
+  background: rgba(75, 137, 120, 0.08);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+  vertical-align: baseline;
+}
+
+.aromatic-name-toggle:hover,
+.aromatic-name-toggle:focus-visible {
+  background: rgba(75, 137, 120, 0.17);
+  outline: 2px solid rgba(75, 137, 120, 0.22);
+  outline-offset: 2px;
+}
+
+.aromatic-name-toggle.technical-active {
+  border-bottom-color: #737b78;
+  background: rgba(93, 104, 100, 0.11);
+}
+
 .name-copy {
   min-width: 0;
 }
@@ -2283,6 +2314,25 @@ button {
   color: #8a631f;
   font-size: 11px;
   font-weight: 700;
+}
+
+.name-copy .aromatic-name-help {
+  color: #55706a;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.name-copy .aromatic-technical-note {
+  max-width: 60ch;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-left: 3px solid #aab4b1;
+  border-radius: 0 7px 7px 0;
+  background: rgba(109, 121, 117, 0.08);
+  color: #5e6966;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.45;
 }
 
 .name-result.concealed {
@@ -4087,6 +4137,32 @@ html[data-theme="dark"] .alkyl-name-toggle.common-active {
   border-bottom-color: #79cbb3;
   background: rgba(87, 179, 152, 0.2);
   color: #9be3cc;
+}
+
+html[data-theme="dark"] .aromatic-name-toggle {
+  border-bottom-color: #75a99b;
+  background: rgba(104, 166, 149, 0.12);
+  color: inherit;
+}
+
+html[data-theme="dark"] .aromatic-name-toggle:hover,
+html[data-theme="dark"] .aromatic-name-toggle:focus-visible {
+  background: rgba(104, 166, 149, 0.22);
+}
+
+html[data-theme="dark"] .aromatic-name-toggle.technical-active {
+  border-bottom-color: #9aa39f;
+  background: rgba(154, 163, 159, 0.14);
+}
+
+html[data-theme="dark"] .name-copy .aromatic-name-help {
+  color: #abc2bb;
+}
+
+html[data-theme="dark"] .name-copy .aromatic-technical-note {
+  border-left-color: #717c78;
+  background: rgba(160, 171, 167, 0.09);
+  color: #bec8c5;
 }
 
 html[data-theme="dark"] .notice {

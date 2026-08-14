@@ -36,6 +36,12 @@ export type StereoDescriptor = {
   locant: number;
 };
 
+export type AromaticStereochemicalNameOptions = {
+  standardName: string;
+  technicalName: string;
+  descriptors: string[];
+};
+
 export type StereoToggleResult<T extends StereoMolecule> =
   | {
       ok: true;
@@ -452,4 +458,28 @@ export function formatStereochemicalName(
     return `ácido (${prefix})-${baseName.slice("ácido ".length)}`;
   }
   return `(${prefix})-${baseName}`;
+}
+
+export function getAromaticStereochemicalNameOptions(
+  technicalName: string,
+  family: string,
+): AromaticStereochemicalNameOptions | null {
+  if (family !== "aromatic") return null;
+
+  const directMatch = /^\(((?:\d+[EZ])(?:,\d+[EZ])*)\)-(.+)$/.exec(technicalName);
+  if (directMatch) {
+    return {
+      standardName: directMatch[2],
+      technicalName,
+      descriptors: directMatch[1].split(","),
+    };
+  }
+
+  const acidMatch = /^ácido \(((?:\d+[EZ])(?:,\d+[EZ])*)\)-(.+)$/.exec(technicalName);
+  if (!acidMatch) return null;
+  return {
+    standardName: `ácido ${acidMatch[2]}`,
+    technicalName,
+    descriptors: acidMatch[1].split(","),
+  };
 }
