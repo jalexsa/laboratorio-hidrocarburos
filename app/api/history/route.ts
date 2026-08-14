@@ -347,7 +347,23 @@ export async function DELETE(request: Request) {
     return Response.json({ error: "No se pudo identificar este navegador." }, { status: 400 });
   }
 
-  const id = new URL(request.url).searchParams.get("id")?.trim() ?? "";
+  const searchParams = new URL(request.url).searchParams;
+  const clearAll = searchParams.get("all") === "true";
+  const id = searchParams.get("id")?.trim() ?? "";
+  if (clearAll) {
+    try {
+      const db = await getDb();
+      await db
+        .delete(moleculeHistory)
+        .where(and(
+          eq(moleculeHistory.ownerKey, owner.ownerKey),
+          eq(moleculeHistory.isDraft, false),
+        ));
+      return Response.json({ deleted: true, all: true });
+    } catch (error) {
+      return Response.json({ error: routeError(error) }, { status: 500 });
+    }
+  }
   if (!id || id.startsWith("draft:")) {
     return Response.json({ error: "Registro no válido." }, { status: 400 });
   }

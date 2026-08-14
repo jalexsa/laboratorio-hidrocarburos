@@ -76,6 +76,31 @@ test("different substituents add locant and alphabetical-order steps", () => {
   assert.match(steps.find((step) => step.number === "05").explanation, /etil → metil/i);
 });
 
+test("repeated substituents on one carbon are explained as a natural group", () => {
+  const result = buildHydrocarbonFromIupacName("1,1-dietil-3-metilciclohexano");
+  assert.equal(result.ok, true, result.ok ? undefined : result.error);
+  const analysis = analyzeMolecule(result.molecule);
+  const steps = buildIupacReasoningSteps(result.molecule, analysis);
+  const substituentStep = steps.find((step) => step.number === "04");
+  assert.match(
+    substituentStep.explanation,
+    /se ubican dos grupos etilo en C1 \(dietil\) y un metilo en C3/i,
+  );
+  assert.doesNotMatch(substituentStep.explanation, /C1 y C1/i);
+});
+
+test("repeated substituents across carbons explain their distribution", () => {
+  const result = buildHydrocarbonFromIupacName("2,2,4-trimetilpentano");
+  assert.equal(result.ok, true, result.ok ? undefined : result.error);
+  const analysis = analyzeMolecule(result.molecule);
+  const steps = buildIupacReasoningSteps(result.molecule, analysis);
+  const substituentStep = steps.find((step) => step.number === "04");
+  assert.match(
+    substituentStep.explanation,
+    /tres grupos metilo: dos en C2 y uno en C4 \(trimetil\)/i,
+  );
+});
+
 test("an E alkene adds multiple-bond and CIP stereochemistry steps", () => {
   const molecule = makeHex3EneE();
   const analysis = analyzeMolecule(molecule);

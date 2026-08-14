@@ -342,6 +342,21 @@ button {
   transform: translateY(-1px);
 }
 
+.history-transfer-toolbar > button.history-clear-all {
+  border-color: #ead5d1;
+  color: #945c55;
+}
+
+.history-transfer-toolbar > button.history-clear-all > span {
+  color: #a75e56;
+}
+
+.history-transfer-toolbar > button.history-clear-all:hover:not(:disabled) {
+  border-color: #ddb5af;
+  background: #fff7f5;
+  color: #8a433b;
+}
+
 .history-transfer-toolbar > label > span,
 .history-transfer-toolbar > button > span {
   color: #2d7a67;
@@ -3628,6 +3643,21 @@ html[data-theme="dark"] .history-transfer-toolbar > button:hover:not(:disabled) 
 html[data-theme="dark"] .history-transfer-toolbar > label > span,
 html[data-theme="dark"] .history-transfer-toolbar > button > span {
   color: #82ceb8;
+}
+
+html[data-theme="dark"] .history-transfer-toolbar > button.history-clear-all {
+  border-color: #59423e;
+  color: #d39b94;
+}
+
+html[data-theme="dark"] .history-transfer-toolbar > button.history-clear-all > span {
+  color: #df9b93;
+}
+
+html[data-theme="dark"] .history-transfer-toolbar > button.history-clear-all:hover:not(:disabled) {
+  border-color: #76534e;
+  background: #352321;
+  color: #efb0a8;
 }
 
 html[data-theme="dark"] .history-transfer-notice {

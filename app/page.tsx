@@ -2466,6 +2466,64 @@ function multipleBondLocantsText(doubleLocants: number[], tripleLocants: number[
   return joinSpanishList(parts);
 }
 
+const spanishCardinals = [
+  "cero",
+  "un",
+  "dos",
+  "tres",
+  "cuatro",
+  "cinco",
+  "seis",
+  "siete",
+  "ocho",
+];
+
+function spanishCardinal(count: number) {
+  return spanishCardinals[count] ?? String(count);
+}
+
+function spanishStandaloneCardinal(count: number) {
+  return count === 1 ? "uno" : spanishCardinal(count);
+}
+
+function substituentNoun(name: string) {
+  return name.endsWith("il") ? `${name}o` : name;
+}
+
+function multiplicativeSubstituentName(name: string, count: number) {
+  const isComplex = /[0-9(),]/.test(name);
+  const prefix = isComplex ? complexPrefixes[count] : simplePrefixes[count];
+  if (!prefix) return `${count} × ${name}`;
+  return isComplex ? `${prefix}(${name})` : `${prefix}${name}`;
+}
+
+function naturalLocalizedSubstituent(name: string, locants: number[]) {
+  const sortedLocants = [...locants].sort((left, right) => left - right);
+  const noun = substituentNoun(name);
+  if (sortedLocants.length === 1) {
+    return `un ${noun} en C${sortedLocants[0]}`;
+  }
+
+  const locationCounts = new Map<number, number>();
+  sortedLocants.forEach((locant) => {
+    locationCounts.set(locant, (locationCounts.get(locant) ?? 0) + 1);
+  });
+  const locations = [...locationCounts.entries()];
+  const multiplicativeName = multiplicativeSubstituentName(name, sortedLocants.length);
+  const lead = `${spanishCardinal(sortedLocants.length)} grupos ${noun}`;
+
+  if (locations.length === 1) {
+    return `${lead} en C${locations[0][0]} (${multiplicativeName})`;
+  }
+  if (locations.every(([, count]) => count === 1)) {
+    return `${lead} en ${joinSpanishList(locations.map(([locant]) => `C${locant}`))} (${multiplicativeName})`;
+  }
+
+  const distribution = locations.map(([locant, count]) =>
+    `${spanishStandaloneCardinal(count)} en C${locant}`);
+  return `${lead}: ${joinSpanishList(distribution)} (${multiplicativeName})`;
+}
+
 export function buildIupacReasoningSteps(
   molecule: Molecule,
   analysis: Analysis,
@@ -2626,9 +2684,7 @@ export function buildIupacReasoningSteps(
   });
   const localizedSubstituents = [...substituentGroups.values()]
     .sort((left, right) => Math.min(...left.locants) - Math.min(...right.locants))
-    .map((group) => `${group.name} en ${joinSpanishList([...group.locants]
-      .sort((left, right) => left - right)
-      .map((locant) => `C${locant}`))}`);
+    .map((group) => naturalLocalizedSubstituent(group.name, group.locants));
 
   if (localizedSubstituents.length) {
     const hierarchyReminder = primaryKind || hasMultipleBonds
@@ -2637,7 +2693,7 @@ export function buildIupacReasoningSteps(
     steps.push({
       number: "04",
       title: "Sustituyentes y localizadores",
-      explanation: `Con la orientación ya evaluada, se ubica ${joinSpanishList(localizedSubstituents)}. ${hierarchyReminder}`,
+      explanation: `Con la orientación ya evaluada, ${analysis.substituents.length === 1 ? "se ubica" : "se ubican"} ${joinSpanishList(localizedSubstituents)}. ${hierarchyReminder}`,
     });
   }
 
@@ -2920,6 +2976,14 @@ function removeLocalLibraryEntry(id: string, section: LibrarySection) {
       });
 }
 
+function clearLocalHistoryEntries() {
+  const state = readLocalLibrary();
+  writeLocalLibrary({
+    ...state,
+    history: [],
+  });
+}
+
 function toPortableStructure(entry: HistoryEntry): PortableStructure {
   return {
     name: entry.name,
@@ -3074,6 +3138,7 @@ export default function Home() {
   const [historySyncState, setHistorySyncState] = useState<HistorySyncState>("loading");
   const [historyMessage, setHistoryMessage] = useState("Preparando tu historial…");
   const [historyImporting, setHistoryImporting] = useState(false);
+  const [historyClearing, setHistoryClearing] = useState(false);
   const [savedBusy, setSavedBusy] = useState(false);
   const [historyTransferNotice, setHistoryTransferNotice] = useState<HistoryTransferNotice | null>(null);
   const [showHydrogens, setShowHydrogens] = useState(true);
@@ -3306,7 +3371,7 @@ export default function Home() {
   }, [historyOpen]);
 
   useEffect(() => {
-    if (!historyReady || !historyIdentity) return;
+    if (!historyReady || !historyIdentity || historyClearing) return;
     const signature = JSON.stringify({ molecule, viewMode });
     if (signature === lastPersistedSignature.current) return;
 
@@ -3380,6 +3445,7 @@ export default function Home() {
     analysis.formula,
     displayedIupacName,
     historyFamilyLabel,
+    historyClearing,
     historyIdentity,
     historyReady,
     historyScope,
@@ -4072,6 +4138,46 @@ export default function Home() {
     }
   };
 
+  const clearHistory = async () => {
+    if (!historyIdentity || !historyEntries.length || historyClearing) return;
+    const total = historyEntries.length;
+    const confirmed = window.confirm(
+      `¿Borrar las ${total} estructura${total === 1 ? "" : "s"} del historial? Guardados y la estructura actual se conservarán. Esta acción no se puede deshacer.`,
+    );
+    if (!confirmed) return;
+
+    setHistoryClearing(true);
+    setHistoryTransferNotice(null);
+    try {
+      if (usesLocalLibrary()) {
+        clearLocalHistoryEntries();
+      } else {
+        const response = await fetch("/api/history?all=true", {
+          method: "DELETE",
+          headers: { "x-lab-visitor-id": historyIdentity },
+        });
+        const data = await response.json() as { error?: string };
+        if (!response.ok) throw new Error(data.error || "No se pudo borrar el historial.");
+      }
+
+      lastPersistedSignature.current = JSON.stringify({ molecule, viewMode });
+      setHistoryEntries([]);
+      setHistoryQuery("");
+      setHistoryTransferNotice({
+        kind: "success",
+        message: "Historial borrado. Tus estructuras de Guardados y la estructura actual se conservaron.",
+      });
+      setNotice("El historial se borró sin modificar Guardados ni la estructura actual.");
+    } catch (error) {
+      setHistoryTransferNotice({
+        kind: "error",
+        message: error instanceof Error ? error.message : "No se pudo borrar el historial.",
+      });
+    } finally {
+      setHistoryClearing(false);
+    }
+  };
+
   const deleteSavedEntry = async (entry: HistoryEntry) => {
     if (!historyIdentity) return;
     if (!window.confirm(`¿Eliminar “${entry.name}” de Guardados?`)) return;
@@ -4340,16 +4446,28 @@ export default function Home() {
             </div>
 
             {librarySection === "history" ? (
-              <div className="history-transfer-toolbar single-action" aria-label="Exportar historial químico">
+              <div className="history-transfer-toolbar" aria-label="Exportar o borrar el historial químico">
                 <button
                   onClick={exportHistoryLibrary}
-                  disabled={!historyEntries.length}
+                  disabled={!historyEntries.length || historyClearing}
                   title={historyEntries.length
                     ? "Descargar el historial en un único documento"
                     : "El historial todavía no contiene estructuras"}
                 >
                   <span aria-hidden="true">↓</span>
                   Exportar historial
+                </button>
+                <button
+                  className="history-clear-all"
+                  onClick={clearHistory}
+                  disabled={!historyEntries.length || historyClearing || historySyncState === "saving"}
+                  title={historyEntries.length
+                    ? "Borrar únicamente el historial; Guardados se conservará"
+                    : "El historial ya está vacío"}
+                  aria-label="Borrar todo mi historial sin eliminar Guardados"
+                >
+                  <span aria-hidden="true">⌫</span>
+                  {historyClearing ? "Borrando…" : "Borrar historial"}
                 </button>
               </div>
             ) : (
