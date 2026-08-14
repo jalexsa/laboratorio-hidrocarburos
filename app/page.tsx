@@ -20,6 +20,7 @@ import {
   inspectDoubleBondStereochemistry,
   toggleDoubleBondGeometry,
 } from "./double-bond-stereochemistry";
+import { getSkeletalRingDoubleBondSegments } from "./skeletal-bond-geometry";
 
 type CarbonAtom = {
   id: number;
@@ -4882,10 +4883,26 @@ export default function Home() {
                 const bondLength = Math.hypot(deltaX, deltaY) || 1;
                 const normalX = -deltaY / bondLength;
                 const normalY = deltaX / bondLength;
-                const offsets = order === 1 ? [0] : order === 2 ? [-5, 5] : [-8, 0, 8];
                 const containingRing = molecule.rings?.find(
                   (ring) => ring.atomIds.includes(a) && ring.atomIds.includes(b),
                 );
+                const ringDoubleBondSegments = viewMode === "skeletal"
+                  && order === 2
+                  && containingRing
+                  ? getSkeletalRingDoubleBondSegments(
+                      positionA,
+                      positionB,
+                      containingRing.atomIds.map((atomId) => displayPositions.get(atomId)!),
+                    )
+                  : null;
+                const offsets = order === 1 ? [0] : order === 2 ? [-5, 5] : [-8, 0, 8];
+                const visibleBondSegments = ringDoubleBondSegments ?? offsets.map((offset) => ({
+                  x: positionA.x + normalX * offset,
+                  y: positionA.y + normalY * offset,
+                  x2: positionB.x + normalX * offset,
+                  y2: positionB.y + normalY * offset,
+                  role: null,
+                }));
                 const lockedBond = isFunctionalBond
                   || containingRing?.kind === "aromatic"
                   || Boolean(molecule.rings?.length && !containingRing);
@@ -4936,14 +4953,14 @@ export default function Home() {
                       x2={positionB.x}
                       y2={positionB.y}
                     />
-                    {offsets.map((offset, index) => (
+                    {visibleBondSegments.map((segment, index) => (
                       <line
                         key={index}
-                        className={`${isMainBond ? "bond main-bond" : "bond branch-bond"} ${isFunctionalBond ? "functional-bond" : ""} ${viewMode === "skeletal" ? "skeletal-bond" : ""}`}
-                        x1={positionA.x + normalX * offset}
-                        y1={positionA.y + normalY * offset}
-                        x2={positionB.x + normalX * offset}
-                        y2={positionB.y + normalY * offset}
+                        className={`${isMainBond ? "bond main-bond" : "bond branch-bond"} ${isFunctionalBond ? "functional-bond" : ""} ${viewMode === "skeletal" ? "skeletal-bond" : ""} ${segment.role ? `skeletal-ring-double-bond ring-double-bond-${segment.role}` : ""}`}
+                        x1={segment.x}
+                        y1={segment.y}
+                        x2={segment.x2}
+                        y2={segment.y2}
                       />
                     ))}
                     {stereoToggleAvailable && (

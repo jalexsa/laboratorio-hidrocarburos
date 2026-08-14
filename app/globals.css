@@ -1293,6 +1293,10 @@ button {
   stroke-dasharray: none;
 }
 
+.skeletal-ring-double-bond {
+  stroke-width: 4.4;
+}
+
 .carbon-node {
   cursor: pointer;
   outline: none;
@@ -1319,6 +1323,10 @@ button {
 
 .uniform-colors .skeletal-bond {
   stroke-width: 5.5;
+}
+
+.uniform-colors .skeletal-ring-double-bond {
+  stroke-width: 4.4;
 }
 
 .uniform-colors .carbon-node.on-branch .atom-circle {
