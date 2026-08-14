@@ -1,6 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import {
+  type ChangeEvent,
+  type FormEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { buildHydrocarbonFromIupacName } from "./name-to-molecule";
 
 type CarbonAtom = {
   id: number;
@@ -28,6 +36,42 @@ type Molecule = {
   bonds: Bond[];
   rings?: RingInfo[];
 };
+
+type HistoryEntry = {
+  id: string;
+  name: string;
+  formula: string;
+  family: string;
+  molecule: Molecule;
+  viewMode: ViewMode;
+  atomCount: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type PortableStructure = Omit<HistoryEntry, "id">;
+
+type ChemistryDocument = {
+  format: "laboratorio-quimica-organica";
+  version: 1;
+  kind: "structure" | "library";
+  exportedAt: string;
+  structure?: PortableStructure;
+  structures?: PortableStructure[];
+};
+
+type HistoryTransferNotice = {
+  kind: "success" | "error";
+  message: string;
+};
+
+type NameBuilderFeedback = {
+  kind: "success" | "error";
+  message: string;
+};
+
+type HistoryScope = "account" | "device";
+type HistorySyncState = "loading" | "saved" | "saving" | "error";
 
 type ViewMode = "condensed" | "skeletal";
 type ThemePreference = "auto" | "light" | "dark";
@@ -2453,13 +2497,270 @@ function ringIconPoints(size: number) {
   }).join(" ");
 }
 
+function getHistoryVisitorId() {
+  const storageKey = "organic-lab-visitor-id";
+  const current = window.localStorage.getItem(storageKey);
+  if (current && /^[a-zA-Z0-9_-]{20,90}$/.test(current)) return current;
+
+  const generated = window.crypto?.randomUUID
+    ? window.crypto.randomUUID()
+    : `lab-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+  window.localStorage.setItem(storageKey, generated);
+  return generated;
+}
+
+function formatHistoryDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Guardado recientemente";
+  return new Intl.DateTimeFormat("es-CL", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function mergeHistoryEntry(items: HistoryEntry[], next: HistoryEntry) {
+  return [next, ...items.filter((item) => item.id !== next.id)]
+    .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
+    .slice(0, 50);
+}
+
+type LocalHistoryState = {
+  draft: HistoryEntry | null;
+  history: HistoryEntry[];
+};
+
+type HistoryWritePayload = {
+  name: string;
+  formula: string;
+  family: string;
+  molecule: Molecule;
+  viewMode: ViewMode;
+  updateDraft?: boolean;
+};
+
+const localHistoryStorageKey = "organic-lab-history-v1";
+
+function usesLocalHistory() {
+  return window.location.hostname === "jalexsa.github.io"
+    || window.location.protocol === "file:";
+}
+
+function readLocalHistory(): LocalHistoryState {
+  try {
+    const stored = window.localStorage.getItem(localHistoryStorageKey);
+    if (!stored) return { draft: null, history: [] };
+    const parsed = JSON.parse(stored) as Partial<LocalHistoryState>;
+    return {
+      draft: parsed.draft?.molecule?.atoms?.length ? parsed.draft : null,
+      history: Array.isArray(parsed.history)
+        ? parsed.history.filter((entry) => entry?.molecule?.atoms?.length).slice(0, 50)
+        : [],
+    };
+  } catch {
+    return { draft: null, history: [] };
+  }
+}
+
+function writeLocalHistory(state: LocalHistoryState) {
+  window.localStorage.setItem(localHistoryStorageKey, JSON.stringify(state));
+}
+
+function saveLocalHistoryEntry(payload: HistoryWritePayload) {
+  const state = readLocalHistory();
+  const now = new Date().toISOString();
+  const signature = JSON.stringify({
+    molecule: payload.molecule,
+    viewMode: payload.viewMode,
+  });
+  const existing = state.history.find((entry) => JSON.stringify({
+    molecule: entry.molecule,
+    viewMode: entry.viewMode,
+  }) === signature);
+  const id = existing?.id ?? (window.crypto?.randomUUID
+    ? window.crypto.randomUUID()
+    : `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`);
+  const entry: HistoryEntry = {
+    id,
+    name: payload.name,
+    formula: payload.formula,
+    family: payload.family,
+    molecule: cloneMolecule(payload.molecule),
+    viewMode: payload.viewMode,
+    atomCount: payload.molecule.atoms.length,
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+  };
+  const history = mergeHistoryEntry(state.history, entry);
+  writeLocalHistory({
+    history,
+    draft: payload.updateDraft === false ? state.draft : entry,
+  });
+  return entry;
+}
+
+function removeLocalHistoryEntry(id: string) {
+  const state = readLocalHistory();
+  writeLocalHistory({
+    draft: state.draft?.id === id ? null : state.draft,
+    history: state.history.filter((entry) => entry.id !== id),
+  });
+}
+
+function toPortableStructure(entry: HistoryEntry): PortableStructure {
+  return {
+    name: entry.name,
+    formula: entry.formula,
+    family: entry.family,
+    molecule: cloneMolecule(entry.molecule),
+    viewMode: entry.viewMode,
+    atomCount: entry.atomCount,
+    createdAt: entry.createdAt,
+    updatedAt: entry.updatedAt,
+  };
+}
+
+function safeChemistryFileName(value: string) {
+  const normalized = value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 70);
+  return normalized || "estructura-organica";
+}
+
+function downloadChemistryDocument(document: ChemistryDocument, fileName: string) {
+  const blob = new Blob([JSON.stringify(document, null, 2)], {
+    type: "application/json;charset=utf-8",
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = window.document.createElement("a");
+  anchor.href = url;
+  anchor.download = `${safeChemistryFileName(fileName)}.quimica`;
+  anchor.style.display = "none";
+  window.document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+}
+
+function isPortableStructure(value: unknown): value is PortableStructure {
+  if (!value || typeof value !== "object") return false;
+  const item = value as Partial<PortableStructure>;
+  return (
+    typeof item.name === "string"
+    && typeof item.formula === "string"
+    && typeof item.family === "string"
+    && (item.viewMode === "condensed" || item.viewMode === "skeletal")
+    && typeof item.atomCount === "number"
+    && typeof item.createdAt === "string"
+    && typeof item.updatedAt === "string"
+    && Boolean(item.molecule)
+    && Array.isArray(item.molecule?.atoms)
+    && Array.isArray(item.molecule?.bonds)
+  );
+}
+
+function readChemistryDocument(value: unknown): PortableStructure[] {
+  if (!value || typeof value !== "object") {
+    throw new Error("El archivo no contiene un documento químico válido.");
+  }
+  const document = value as Partial<ChemistryDocument>;
+  if (document.format !== "laboratorio-quimica-organica" || document.version !== 1) {
+    throw new Error("Este archivo no pertenece a una versión compatible del laboratorio.");
+  }
+
+  const structures = document.kind === "structure"
+    ? document.structure ? [document.structure] : []
+    : document.kind === "library" && Array.isArray(document.structures)
+      ? document.structures.slice(0, 50)
+      : [];
+
+  if (!structures.length || !structures.every(isPortableStructure)) {
+    throw new Error("El documento no contiene estructuras orgánicas válidas.");
+  }
+  return structures;
+}
+
+function MoleculeHistoryPreview({ molecule }: { molecule: Molecule }) {
+  const minX = Math.min(...molecule.atoms.map((atom) => atom.x));
+  const maxX = Math.max(...molecule.atoms.map((atom) => atom.x));
+  const minY = Math.min(...molecule.atoms.map((atom) => atom.y));
+  const maxY = Math.max(...molecule.atoms.map((atom) => atom.y));
+  const width = Math.max(maxX - minX, 1);
+  const height = Math.max(maxY - minY, 1);
+  const scale = Math.min(94 / width, 48 / height, 25);
+  const centerX = (minX + maxX) / 2;
+  const centerY = (minY + maxY) / 2;
+  const positions = new Map(
+    molecule.atoms.map((atom) => [
+      atom.id,
+      {
+        x: 60 + (atom.x - centerX) * scale,
+        y: 32 + (atom.y - centerY) * scale,
+      },
+    ]),
+  );
+
+  return (
+    <svg className="history-molecule-preview" viewBox="0 0 120 64" aria-hidden="true">
+      {molecule.bonds.flatMap((bond) => {
+        const start = positions.get(bond[0]);
+        const end = positions.get(bond[1]);
+        if (!start || !end) return [];
+        const order = getBondOrder(bond);
+        const deltaX = end.x - start.x;
+        const deltaY = end.y - start.y;
+        const length = Math.hypot(deltaX, deltaY) || 1;
+        const normalX = -deltaY / length;
+        const normalY = deltaX / length;
+        const offsets = order === 1 ? [0] : order === 2 ? [-2, 2] : [-3, 0, 3];
+        return offsets.map((offset, index) => (
+          <line
+            key={`${bond[0]}-${bond[1]}-${index}`}
+            x1={start.x + normalX * offset}
+            y1={start.y + normalY * offset}
+            x2={end.x + normalX * offset}
+            y2={end.y + normalY * offset}
+          />
+        ));
+      })}
+      {molecule.atoms.map((atom) => {
+        const position = positions.get(atom.id)!;
+        const element = atom.element ?? "C";
+        return (
+          <g key={atom.id} transform={`translate(${position.x} ${position.y})`}>
+            <circle className={element === "C" ? "history-carbon" : "history-hetero"} r={element === "C" ? 3.5 : 7} />
+            {element !== "C" && (
+              <text textAnchor="middle" dominantBaseline="central">{element}</text>
+            )}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
 export default function Home() {
   const [molecule, setMolecule] = useState<Molecule>(() =>
     cloneMolecule(PRESETS.find((preset) => preset.label === "2-metilpropano")!.molecule),
   );
   const [selectedId, setSelectedId] = useState(2);
-  const [history, setHistory] = useState<Molecule[]>([]);
+  const [undoStack, setUndoStack] = useState<Molecule[]>([]);
   const [future, setFuture] = useState<Molecule[]>([]);
+  const [savedStructures, setSavedStructures] = useState<HistoryEntry[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyQuery, setHistoryQuery] = useState("");
+  const [historyIdentity, setHistoryIdentity] = useState<string | null>(null);
+  const [historyScope, setHistoryScope] = useState<HistoryScope>("device");
+  const [historyReady, setHistoryReady] = useState(false);
+  const [historySyncState, setHistorySyncState] = useState<HistorySyncState>("loading");
+  const [historyMessage, setHistoryMessage] = useState("Preparando tu historial…");
+  const [historyImporting, setHistoryImporting] = useState(false);
+  const [historyTransferNotice, setHistoryTransferNotice] = useState<HistoryTransferNotice | null>(null);
   const [showHydrogens, setShowHydrogens] = useState(true);
   const [showNumbering, setShowNumbering] = useState(true);
   const [highlightSubstituents, setHighlightSubstituents] = useState(true);
@@ -2476,6 +2777,10 @@ export default function Home() {
   const [automaticDark, setAutomaticDark] = useState(false);
   const [showCreatorCredit, setShowCreatorCredit] = useState(false);
   const [notice, setNotice] = useState("Selecciona un carbono para añadir otro o toca un enlace para cambiar su orden.");
+  const [nameBuilderOpen, setNameBuilderOpen] = useState(true);
+  const [iupacInput, setIupacInput] = useState("");
+  const [nameBuilderFeedback, setNameBuilderFeedback] = useState<NameBuilderFeedback | null>(null);
+  const lastPersistedSignature = useRef("");
 
   const adjacency = useMemo(() => buildAdjacency(molecule), [molecule]);
   const analysis = useMemo(
@@ -2506,6 +2811,106 @@ export default function Home() {
   const hasInteractiveAlkylName = interactiveNameParts.some((part) => part.systematic);
   const hasInteractiveRingName = interactiveNameParts.some((part) => part.ringSystematic);
   const isDarkTheme = themePreference === "dark" || (themePreference === "auto" && automaticDark);
+  const historyFamilyLabel = analysis.primaryFunctionalLabel
+    ?? analysis.functionalGroups[0]?.label
+    ?? (analysis.family === "aromatic"
+      ? "Aromático"
+      : analysis.family === "cycloalkane"
+        ? "Cíclico"
+        : analysis.family === "polycyclic"
+          ? "Policíclico"
+          : "Hidrocarburo");
+  const filteredSavedStructures = useMemo(() => {
+    const query = historyQuery.trim().toLocaleLowerCase("es");
+    if (!query) return savedStructures;
+    return savedStructures.filter((item) =>
+      `${item.name} ${item.formula} ${item.family}`
+        .toLocaleLowerCase("es")
+        .includes(query),
+    );
+  }, [historyQuery, savedStructures]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const visitorId = getHistoryVisitorId();
+
+    if (usesLocalHistory()) {
+      const data = readLocalHistory();
+      const restoreLocalHistory = window.setTimeout(() => {
+        if (cancelled) return;
+        setHistoryIdentity(visitorId);
+        setHistoryScope("device");
+        setSavedStructures(data.history);
+        if (data.draft?.molecule?.atoms?.length) {
+          const restored = cloneMolecule(data.draft.molecule);
+          lastPersistedSignature.current = JSON.stringify({
+            molecule: restored,
+            viewMode: data.draft.viewMode,
+          });
+          setMolecule(restored);
+          setSelectedId(restored.atoms[0].id);
+          setViewMode(data.draft.viewMode);
+          setNotice(`Continuamos donde quedaste: ${data.draft.name}.`);
+        }
+        setHistorySyncState("saved");
+        setHistoryMessage("Guardado para este navegador");
+        setHistoryReady(true);
+      }, 0);
+      return () => {
+        cancelled = true;
+        window.clearTimeout(restoreLocalHistory);
+      };
+    }
+
+    fetch("/api/history", {
+      headers: { "x-lab-visitor-id": visitorId },
+    })
+      .then(async (response) => {
+        const data = await response.json() as {
+          scope?: HistoryScope;
+          draft?: HistoryEntry | null;
+          history?: HistoryEntry[];
+          error?: string;
+        };
+        if (!response.ok) throw new Error(data.error || "No se pudo cargar el historial.");
+        return data;
+      })
+      .then((data) => {
+        if (cancelled) return;
+        setHistoryIdentity(visitorId);
+        setHistoryScope(data.scope ?? "device");
+        setSavedStructures(data.history ?? []);
+        if (data.draft?.molecule?.atoms?.length) {
+          const restored = cloneMolecule(data.draft.molecule);
+          lastPersistedSignature.current = JSON.stringify({
+            molecule: restored,
+            viewMode: data.draft.viewMode,
+          });
+          setMolecule(restored);
+          setSelectedId(restored.atoms[0].id);
+          setViewMode(data.draft.viewMode);
+          setNotice(`Continuamos donde quedaste: ${data.draft.name}.`);
+        }
+        setHistorySyncState("saved");
+        setHistoryMessage(
+          data.scope === "account"
+            ? "Sincronizado con tu cuenta"
+            : "Guardado para este navegador",
+        );
+        setHistoryReady(true);
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setHistoryIdentity(visitorId);
+        setHistorySyncState("error");
+        setHistoryMessage(error instanceof Error ? error.message : "Historial no disponible.");
+        setHistoryReady(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const storedTheme = window.localStorage.getItem("hydrocarbon-theme");
@@ -2535,11 +2940,144 @@ export default function Home() {
     document.documentElement.style.colorScheme = isDarkTheme ? "dark" : "light";
   }, [isDarkTheme]);
 
+  useEffect(() => {
+    if (!historyOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setHistoryOpen(false);
+    };
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [historyOpen]);
+
+  useEffect(() => {
+    if (!historyReady || !historyIdentity) return;
+    const signature = JSON.stringify({ molecule, viewMode });
+    if (signature === lastPersistedSignature.current) return;
+
+    const timer = window.setTimeout(() => {
+      setHistorySyncState("saving");
+      setHistoryMessage("Guardando esta estructura…");
+
+      if (usesLocalHistory()) {
+        try {
+          const item = saveLocalHistoryEntry({
+            name: displayedIupacName,
+            formula: analysis.formula,
+            family: historyFamilyLabel,
+            molecule,
+            viewMode,
+          });
+          lastPersistedSignature.current = signature;
+          setSavedStructures((items) => mergeHistoryEntry(items, item));
+          setHistoryScope("device");
+          setHistorySyncState("saved");
+          setHistoryMessage("Guardado para este navegador");
+        } catch {
+          setHistorySyncState("error");
+          setHistoryMessage("El navegador no permitió guardar esta estructura.");
+        }
+        return;
+      }
+
+      fetch("/api/history", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-lab-visitor-id": historyIdentity,
+        },
+        body: JSON.stringify({
+          name: displayedIupacName,
+          formula: analysis.formula,
+          family: historyFamilyLabel,
+          molecule,
+          viewMode,
+          archive: true,
+        }),
+      })
+        .then(async (response) => {
+          const data = await response.json() as {
+            scope?: HistoryScope;
+            item?: HistoryEntry | null;
+            error?: string;
+          };
+          if (!response.ok) throw new Error(data.error || "No se pudo guardar.");
+          return data;
+        })
+        .then((data) => {
+          lastPersistedSignature.current = signature;
+          if (data.item) {
+            setSavedStructures((items) => mergeHistoryEntry(items, data.item!));
+          }
+          setHistoryScope(data.scope ?? historyScope);
+          setHistorySyncState("saved");
+          setHistoryMessage(
+            (data.scope ?? historyScope) === "account"
+              ? "Sincronizado con tu cuenta"
+              : "Guardado para este navegador",
+          );
+        })
+        .catch((error: unknown) => {
+          setHistorySyncState("error");
+          setHistoryMessage(error instanceof Error ? error.message : "No se pudo guardar.");
+        });
+    }, 1200);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    analysis.formula,
+    displayedIupacName,
+    historyFamilyLabel,
+    historyIdentity,
+    historyReady,
+    historyScope,
+    molecule,
+    viewMode,
+  ]);
+
   const commit = (next: Molecule, message: string) => {
-    setHistory((items) => [...items, cloneMolecule(molecule)]);
+    setUndoStack((items) => [...items, cloneMolecule(molecule)]);
     setFuture([]);
     setMolecule(next);
     setNotice(message);
+  };
+
+  const constructFromIupacName = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const result = buildHydrocarbonFromIupacName(iupacInput);
+    if (!result.ok) {
+      setNameBuilderOpen(true);
+      setNameBuilderFeedback({ kind: "error", message: result.error });
+      return;
+    }
+
+    const next: Molecule = result.molecule;
+    const generatedAnalysis = analyzeMolecule(next, result.enabledAliases);
+    const commonName = generatedAnalysis.commonName
+      ? `; también se conoce como ${generatedAnalysis.commonName}`
+      : "";
+    const omittedRingLocant = /^ciclo[a-z]+(?:eno|ino)$/.test(result.normalizedInput);
+
+    commit(
+      next,
+      `Estructura creada desde «${iupacInput.trim()}». Puedes seguir editándola átomo por átomo.`,
+    );
+    setSelectedId(next.atoms[0].id);
+    setCommonAlkylNameSelections(result.enabledAliases);
+    setUseSimplifiedRingUnsaturationName(omittedRingLocant);
+    setShowIupacName(true);
+    setRingInsertMode("replace");
+    setShowAlkylPalette(false);
+    setShowRingPalette(false);
+    setShowFunctionalPalette(false);
+    setNameBuilderFeedback({
+      kind: "success",
+      message: `Lista: ${generatedAnalysis.name}${commonName}. Ya quedó añadida a tu historial automático.`,
+    });
   };
 
   const cycleTheme = () => {
@@ -2875,10 +3413,10 @@ export default function Home() {
   };
 
   const undo = () => {
-    const previous = history.at(-1);
+    const previous = undoStack.at(-1);
     if (!previous) return;
     setFuture((items) => [cloneMolecule(molecule), ...items]);
-    setHistory((items) => items.slice(0, -1));
+    setUndoStack((items) => items.slice(0, -1));
     setMolecule(cloneMolecule(previous));
     setSelectedId(previous.atoms[0].id);
     setNotice("Último cambio deshecho.");
@@ -2887,11 +3425,228 @@ export default function Home() {
   const redo = () => {
     const next = future[0];
     if (!next) return;
-    setHistory((items) => [...items, cloneMolecule(molecule)]);
+    setUndoStack((items) => [...items, cloneMolecule(molecule)]);
     setFuture((items) => items.slice(1));
     setMolecule(cloneMolecule(next));
     setSelectedId(next.atoms[0].id);
     setNotice("Cambio rehecho.");
+  };
+
+  const saveCurrentStructure = async () => {
+    if (!historyIdentity) return;
+    const signature = JSON.stringify({ molecule, viewMode });
+    setHistorySyncState("saving");
+    setHistoryMessage("Guardando esta estructura…");
+    try {
+      if (usesLocalHistory()) {
+        const item = saveLocalHistoryEntry({
+          name: displayedIupacName,
+          formula: analysis.formula,
+          family: historyFamilyLabel,
+          molecule,
+          viewMode,
+        });
+        lastPersistedSignature.current = signature;
+        setSavedStructures((items) => mergeHistoryEntry(items, item));
+        setHistoryScope("device");
+        setHistorySyncState("saved");
+        setHistoryMessage("Guardado para este navegador");
+        setNotice(`${displayedIupacName} quedó guardado en tu historial.`);
+        setHistoryOpen(true);
+        return;
+      }
+
+      const response = await fetch("/api/history", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-lab-visitor-id": historyIdentity,
+        },
+        body: JSON.stringify({
+          name: displayedIupacName,
+          formula: analysis.formula,
+          family: historyFamilyLabel,
+          molecule,
+          viewMode,
+          archive: true,
+        }),
+      });
+      const data = await response.json() as {
+        scope?: HistoryScope;
+        item?: HistoryEntry | null;
+        error?: string;
+      };
+      if (!response.ok) throw new Error(data.error || "No se pudo guardar.");
+      lastPersistedSignature.current = signature;
+      if (data.item) {
+        setSavedStructures((items) => mergeHistoryEntry(items, data.item!));
+      }
+      const scope = data.scope ?? historyScope;
+      setHistoryScope(scope);
+      setHistorySyncState("saved");
+      setHistoryMessage(
+        scope === "account"
+          ? "Sincronizado con tu cuenta"
+          : "Guardado para este navegador",
+      );
+      setNotice(`${displayedIupacName} quedó guardado en tu historial.`);
+      setHistoryOpen(true);
+    } catch (error) {
+      setHistorySyncState("error");
+      setHistoryMessage(error instanceof Error ? error.message : "No se pudo guardar.");
+    }
+  };
+
+  const restoreHistoryEntry = (entry: HistoryEntry) => {
+    const restored = cloneMolecule(entry.molecule);
+    commit(restored, `Estructura recuperada del historial: ${entry.name}.`);
+    setSelectedId(restored.atoms[0].id);
+    setViewMode(entry.viewMode);
+    setShowAlkylPalette(false);
+    setShowRingPalette(false);
+    setShowFunctionalPalette(false);
+    setHistoryOpen(false);
+  };
+
+  const exportHistoryEntry = (entry: HistoryEntry) => {
+    const document: ChemistryDocument = {
+      format: "laboratorio-quimica-organica",
+      version: 1,
+      kind: "structure",
+      exportedAt: new Date().toISOString(),
+      structure: toPortableStructure(entry),
+    };
+    downloadChemistryDocument(document, entry.name);
+    setHistoryTransferNotice({
+      kind: "success",
+      message: `${entry.name} se descargó como documento .quimica.`,
+    });
+  };
+
+  const exportHistoryLibrary = () => {
+    if (!savedStructures.length) return;
+    const document: ChemistryDocument = {
+      format: "laboratorio-quimica-organica",
+      version: 1,
+      kind: "library",
+      exportedAt: new Date().toISOString(),
+      structures: savedStructures.map(toPortableStructure),
+    };
+    const date = new Date().toISOString().slice(0, 10);
+    downloadChemistryDocument(document, `mi-historial-quimico-${date}`);
+    setHistoryTransferNotice({
+      kind: "success",
+      message: `Biblioteca exportada con ${savedStructures.length} estructura${savedStructures.length === 1 ? "" : "s"}.`,
+    });
+  };
+
+  const importChemistryDocument = async (event: ChangeEvent<HTMLInputElement>) => {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    if (!file || !historyIdentity) return;
+
+    setHistoryImporting(true);
+    setHistoryTransferNotice(null);
+    try {
+      if (file.size > 4_000_000) {
+        throw new Error("El documento supera el límite de 4 MB.");
+      }
+      const parsed = JSON.parse(await file.text()) as unknown;
+      const structures = readChemistryDocument(parsed);
+      const importedEntries: HistoryEntry[] = [];
+
+      for (const structure of structures) {
+        if (usesLocalHistory()) {
+          importedEntries.push(saveLocalHistoryEntry({
+            name: structure.name,
+            formula: structure.formula,
+            family: structure.family,
+            molecule: structure.molecule,
+            viewMode: structure.viewMode,
+            updateDraft: false,
+          }));
+          continue;
+        }
+
+        const response = await fetch("/api/history", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-lab-visitor-id": historyIdentity,
+          },
+          body: JSON.stringify({
+            name: structure.name,
+            formula: structure.formula,
+            family: structure.family,
+            molecule: structure.molecule,
+            viewMode: structure.viewMode,
+            archive: true,
+            updateDraft: false,
+          }),
+        });
+        const data = await response.json() as {
+          item?: HistoryEntry | null;
+          error?: string;
+        };
+        if (!response.ok || !data.item) {
+          throw new Error(data.error || `No fue posible importar ${structure.name}.`);
+        }
+        importedEntries.push(data.item);
+      }
+
+      setSavedStructures((items) =>
+        importedEntries.reduce(
+          (current, entry) => mergeHistoryEntry(current, entry),
+          items,
+        ),
+      );
+
+      if (importedEntries.length === 1) {
+        const [entry] = importedEntries;
+        restoreHistoryEntry(entry);
+        setNotice(`${entry.name} se importó desde ${file.name} y está lista para editar.`);
+      } else {
+        setHistoryTransferNotice({
+          kind: "success",
+          message: `${importedEntries.length} estructuras importadas. Elige una para abrirla.`,
+        });
+      }
+    } catch (error) {
+      setHistoryTransferNotice({
+        kind: "error",
+        message: error instanceof Error
+          ? error.message
+          : "No fue posible leer este documento químico.",
+      });
+    } finally {
+      setHistoryImporting(false);
+      input.value = "";
+    }
+  };
+
+  const deleteHistoryEntry = async (entry: HistoryEntry) => {
+    if (!historyIdentity) return;
+    if (!window.confirm(`¿Eliminar “${entry.name}” de tu historial?`)) return;
+    try {
+      if (usesLocalHistory()) {
+        removeLocalHistoryEntry(entry.id);
+        setSavedStructures((items) => items.filter((item) => item.id !== entry.id));
+        setNotice(`${entry.name} se eliminó del historial.`);
+        return;
+      }
+
+      const response = await fetch(`/api/history?id=${encodeURIComponent(entry.id)}`, {
+        method: "DELETE",
+        headers: { "x-lab-visitor-id": historyIdentity },
+      });
+      const data = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(data.error || "No se pudo eliminar.");
+      setSavedStructures((items) => items.filter((item) => item.id !== entry.id));
+      setNotice(`${entry.name} se eliminó del historial.`);
+    } catch (error) {
+      setHistorySyncState("error");
+      setHistoryMessage(error instanceof Error ? error.message : "No se pudo eliminar.");
+    }
   };
 
   const loadPreset = (preset: (typeof PRESETS)[number]) => {
@@ -3097,6 +3852,19 @@ export default function Home() {
         </div>
         <div className="header-actions">
           <button
+            className="personal-history-control"
+            onClick={() => setHistoryOpen(true)}
+            aria-label={`Abrir mi historial. ${savedStructures.length} estructuras guardadas`}
+            aria-haspopup="dialog"
+          >
+            <span className="personal-history-icon" aria-hidden="true">↺</span>
+            <span className="personal-history-copy">
+              Mi historial
+              <small>{historySyncState === "saving" ? "Guardando…" : "Siempre disponible"}</small>
+            </span>
+            <strong>{savedStructures.length}</strong>
+          </button>
+          <button
             className="theme-control"
             onClick={cycleTheme}
             aria-label={`Tema ${themeModeLabel}. Cambiar modo de color`}
@@ -3111,6 +3879,178 @@ export default function Home() {
           </div>
         </div>
       </header>
+
+      {historyOpen && (
+        <div className="history-overlay">
+          <button
+            className="history-scrim"
+            onClick={() => setHistoryOpen(false)}
+            aria-label="Cerrar historial"
+          />
+          <aside
+            className="history-drawer"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="history-title"
+          >
+            <div className="history-drawer-heading">
+              <div>
+                <p className="eyebrow">Biblioteca personal</p>
+                <h2 id="history-title">Mi historial químico</h2>
+              </div>
+              <button
+                className="history-close"
+                onClick={() => setHistoryOpen(false)}
+                aria-label="Cerrar historial"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="history-transfer-toolbar" aria-label="Importar y exportar documentos químicos">
+              <label className={historyImporting || !historyIdentity ? "disabled" : ""}>
+                <span aria-hidden="true">↑</span>
+                {historyImporting ? "Importando…" : "Importar .quimica"}
+                <input
+                  type="file"
+                  accept=".quimica,.json,application/json"
+                  onChange={importChemistryDocument}
+                  disabled={historyImporting || !historyIdentity}
+                  aria-label="Importar documento químico"
+                />
+              </label>
+              <button
+                onClick={exportHistoryLibrary}
+                disabled={!savedStructures.length}
+                title={savedStructures.length
+                  ? "Descargar toda la biblioteca en un único documento"
+                  : "Guarda una estructura antes de exportar la biblioteca"}
+              >
+                <span aria-hidden="true">↓</span>
+                Exportar biblioteca
+              </button>
+            </div>
+
+            {historyTransferNotice && (
+              <div className={`history-transfer-notice transfer-${historyTransferNotice.kind}`} role="status">
+                <span aria-hidden="true">{historyTransferNotice.kind === "success" ? "✓" : "!"}</span>
+                <p>{historyTransferNotice.message}</p>
+                <button
+                  onClick={() => setHistoryTransferNotice(null)}
+                  aria-label="Cerrar aviso de archivo"
+                >
+                  ×
+                </button>
+              </div>
+            )}
+
+            <div className="history-current-card">
+              <MoleculeHistoryPreview molecule={molecule} />
+              <div>
+                <span>Estructura actual</span>
+                <strong>{displayedIupacName}</strong>
+                <small>{analysis.formula} · {historyFamilyLabel}</small>
+              </div>
+              <button onClick={saveCurrentStructure} disabled={!historyIdentity || historySyncState === "saving"}>
+                {historySyncState === "saving" ? "Guardando…" : "Guardar ahora"}
+              </button>
+            </div>
+
+            <div className={`history-sync history-sync-${historySyncState}`} role="status">
+              <span aria-hidden="true" />
+              <div>
+                <strong>{historyMessage}</strong>
+                <small>
+                  {historyScope === "account"
+                    ? "Tus estructuras se recuperan cuando vuelves con la misma cuenta."
+                    : "Tus estructuras se recuperan cuando vuelves desde este navegador."}
+                </small>
+              </div>
+            </div>
+
+            <label className="history-search">
+              <span aria-hidden="true">⌕</span>
+              <input
+                type="search"
+                value={historyQuery}
+                onChange={(event) => setHistoryQuery(event.target.value)}
+                placeholder="Buscar por nombre, fórmula o familia"
+                aria-label="Buscar en mi historial"
+              />
+              {historyQuery && (
+                <button onClick={() => setHistoryQuery("")} aria-label="Limpiar búsqueda">×</button>
+              )}
+            </label>
+
+            <div className="history-list-heading">
+              <div>
+                <strong>Versiones recientes</strong>
+                <small>Se guarda una versión única después de cada pausa.</small>
+              </div>
+              <span>{filteredSavedStructures.length}</span>
+            </div>
+
+            <div className="history-list">
+              {historySyncState === "loading" ? (
+                <div className="history-empty">
+                  <span className="history-loader" aria-hidden="true" />
+                  <strong>Cargando tus estructuras…</strong>
+                </div>
+              ) : filteredSavedStructures.length ? (
+                filteredSavedStructures.map((entry) => (
+                  <article className="history-item" key={entry.id}>
+                    <button
+                      className="history-item-open"
+                      onClick={() => restoreHistoryEntry(entry)}
+                      aria-label={`Abrir ${entry.name}`}
+                    >
+                      <MoleculeHistoryPreview molecule={entry.molecule} />
+                      <span className="history-item-copy">
+                        <strong>{entry.name}</strong>
+                        <span>{entry.formula} · {entry.family}</span>
+                        <small>{formatHistoryDate(entry.updatedAt)} · {entry.atomCount} átomos</small>
+                      </span>
+                    </button>
+                    <div className="history-item-actions">
+                      <button
+                        className="history-download"
+                        onClick={() => exportHistoryEntry(entry)}
+                        aria-label={`Descargar ${entry.name} como documento químico`}
+                        title="Descargar archivo .quimica"
+                      >
+                        ↓
+                      </button>
+                      <button
+                        className="history-delete"
+                        onClick={() => deleteHistoryEntry(entry)}
+                        aria-label={`Eliminar ${entry.name} del historial`}
+                        title="Eliminar del historial"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </article>
+                ))
+              ) : (
+                <div className="history-empty">
+                  <span aria-hidden="true">⌬</span>
+                  <strong>{historyQuery ? "No encontramos coincidencias" : "Tu historial comienza aquí"}</strong>
+                  <p>
+                    {historyQuery
+                      ? "Prueba con el nombre IUPAC, la fórmula o la familia del compuesto."
+                      : "Construye una molécula o importa un archivo .quimica. Podrás editarla y volver a exportarla cuando quieras."}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <p className="history-privacy-note">
+              <span aria-hidden="true">✓</span>
+              Cada visitante ve únicamente su propia biblioteca de estructuras.
+            </p>
+          </aside>
+        </div>
+      )}
 
       <section className="intro-strip" aria-label="Instrucciones breves">
         <div>
@@ -3137,6 +4077,18 @@ export default function Home() {
               <h2>Construye la estructura orgánica</h2>
             </div>
             <div className="heading-actions">
+              <button
+                className={`name-builder-toggle ${nameBuilderOpen ? "active" : ""}`}
+                onClick={() => {
+                  setNameBuilderOpen((open) => !open);
+                  setNameBuilderFeedback(null);
+                }}
+                aria-expanded={nameBuilderOpen}
+                aria-controls="iupac-name-builder"
+              >
+                <span aria-hidden="true">Aa</span>
+                Por nombre
+              </button>
               <div className="view-mode-switch" role="group" aria-label="Tipo de representación molecular">
                 <button
                   className={viewMode === "condensed" ? "active" : ""}
@@ -3158,12 +4110,81 @@ export default function Home() {
                 </button>
               </div>
               <div className="history-controls" aria-label="Historial de cambios">
-                <button onClick={undo} disabled={!history.length} title="Deshacer">↶</button>
+                <button onClick={undo} disabled={!undoStack.length} title="Deshacer">↶</button>
                 <button onClick={redo} disabled={!future.length} title="Rehacer">↷</button>
                 <button className="new-button" onClick={newMolecule}>Nueva</button>
               </div>
             </div>
           </div>
+
+          {nameBuilderOpen && (
+            <form
+              id="iupac-name-builder"
+              className="name-builder-panel"
+              onSubmit={constructFromIupacName}
+            >
+              <div className="name-builder-intro">
+                <span className="name-builder-mark" aria-hidden="true">Aa</span>
+                <div>
+                  <strong>Construir por nombre IUPAC</strong>
+                  <small>Escribe el nombre y el laboratorio dibujará la conectividad automáticamente.</small>
+                </div>
+                <span className="name-builder-scope">Hidrocarburos</span>
+              </div>
+
+              <div className="name-builder-field-row">
+                <label htmlFor="iupac-name-input">Nombre del compuesto</label>
+                <div className="name-builder-input-group">
+                  <input
+                    id="iupac-name-input"
+                    type="text"
+                    value={iupacInput}
+                    onChange={(event) => {
+                      setIupacInput(event.target.value);
+                      setNameBuilderFeedback(null);
+                    }}
+                    placeholder="Ej.: 3-etil-2-metilhexano"
+                    autoComplete="off"
+                    spellCheck={false}
+                    aria-describedby="name-builder-help"
+                  />
+                  <button type="submit">
+                    Crear estructura
+                    <span aria-hidden="true">→</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="name-builder-footer" id="name-builder-help">
+                <div className="name-builder-examples" aria-label="Ejemplos de nombres compatibles">
+                  <span>Prueba:</span>
+                  {["hex-2-eno", "3-etil-2-metilhexano", "1,4-dimetilciclohexano", "tolueno"].map((example) => (
+                    <button
+                      type="button"
+                      key={example}
+                      onClick={() => {
+                        setIupacInput(example);
+                        setNameBuilderFeedback(null);
+                      }}
+                    >
+                      {example}
+                    </button>
+                  ))}
+                </div>
+                <small>Admite alcanos, alquenos, alquinos, ciclos, benceno y sustituyentes alquilo.</small>
+              </div>
+
+              {nameBuilderFeedback && (
+                <div
+                  className={`name-builder-feedback ${nameBuilderFeedback.kind}`}
+                  role={nameBuilderFeedback.kind === "error" ? "alert" : "status"}
+                >
+                  <span aria-hidden="true">{nameBuilderFeedback.kind === "success" ? "✓" : "!"}</span>
+                  <p>{nameBuilderFeedback.message}</p>
+                </div>
+              )}
+            </form>
+          )}
 
           <div className={`molecule-stage ${viewMode === "skeletal" ? "skeletal-view" : "condensed-view"} ${highlightSubstituents ? "" : "uniform-colors"}`}>
             <svg

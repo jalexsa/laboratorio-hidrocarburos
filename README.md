@@ -2,15 +2,17 @@
 
 ## Laboratorio de hidrocarburos
 
-Simulación didáctica para construir alcanos lineales y ramificados, identificar
-la cadena principal, explorar sustituyentes alquilo y practicar nomenclatura
-IUPAC en vista condensada o esquelética.
+Simulación didáctica para construir y analizar estructuras de química orgánica
+en vista semidesarrollada o esquelética. Incluye hidrocarburos, ciclos,
+aromáticos, grupos funcionales, un constructor desde nombres IUPAC y una
+biblioteca personal importable y exportable mediante archivos `.quimica`.
 
 - Sitio principal: https://laboratorio-hidrocarburos.jalexsa.chatgpt.site
 - GitHub Pages: https://jalexsa.github.io/laboratorio-hidrocarburos/
 
 La versión de GitHub Pages se genera automáticamente desde la rama `main` con
-`npm run build:pages`.
+`npm run build:pages`. En GitHub Pages, el historial queda guardado localmente
+en el navegador; en Sites se sincroniza mediante su almacenamiento persistente.
 
 A clean full-stack starter running on
 [vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
