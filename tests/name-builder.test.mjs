@@ -41,6 +41,30 @@ test("recognizes common and systematic branched substituent forms", () => {
   assert.deepEqual(common.enabledAliases, ["1-metiletil"]);
 });
 
+test("builds aromatic and acyclic alcohols from their IUPAC names", () => {
+  const triol = build("benceno-1,3,5-triol");
+  const oxygenAtoms = triol.molecule.atoms.filter((atom) => atom.element === "O");
+  assert.equal(triol.molecule.rings?.[0].kind, "aromatic");
+  assert.equal(oxygenAtoms.length, 3);
+  assert.deepEqual(
+    triol.molecule.bonds
+      .filter((bond) => oxygenAtoms.some((atom) => bond.includes(atom.id)))
+      .map(([carbonId]) => carbonId)
+      .sort((left, right) => left - right),
+    [1, 3, 5],
+  );
+
+  const alcohol = build("propan-2-ol");
+  assert.equal(alcohol.molecule.atoms.filter((atom) => atom.element === "O").length, 1);
+  assert.ok(alcohol.molecule.bonds.some(([left, right]) => left === 2 && right === 4));
+});
+
+test("recognizes phenol as the single-hydroxyl aromatic alias", () => {
+  const phenol = build("fenol");
+  assert.equal(phenol.molecule.rings?.[0].kind, "aromatic");
+  assert.equal(phenol.molecule.atoms.filter((atom) => atom.element === "O").length, 1);
+});
+
 test("rejects structures that would exceed carbon valence", () => {
   const result = buildHydrocarbonFromIupacName("2,2,2-trimetilpropano");
   assert.equal(result.ok, false);

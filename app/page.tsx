@@ -72,6 +72,7 @@ type NameBuilderFeedback = {
 
 type HistoryScope = "account" | "device";
 type HistorySyncState = "loading" | "saved" | "saving" | "error";
+type LibrarySection = "history" | "saved";
 
 type ViewMode = "condensed" | "skeletal";
 type ThemePreference = "auto" | "light" | "dark";
@@ -2520,18 +2521,19 @@ function formatHistoryDate(value: string) {
   }).format(date);
 }
 
-function mergeHistoryEntry(items: HistoryEntry[], next: HistoryEntry) {
+function mergeHistoryEntry(items: HistoryEntry[], next: HistoryEntry, limit = 50) {
   return [next, ...items.filter((item) => item.id !== next.id)]
     .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
-    .slice(0, 50);
+    .slice(0, limit);
 }
 
-type LocalHistoryState = {
+type LocalLibraryState = {
   draft: HistoryEntry | null;
   history: HistoryEntry[];
+  saved: HistoryEntry[];
 };
 
-type HistoryWritePayload = {
+type LocalLibraryWritePayload = {
   name: string;
   formula: string;
   family: string;
@@ -2540,49 +2542,42 @@ type HistoryWritePayload = {
   updateDraft?: boolean;
 };
 
-const localHistoryStorageKey = "organic-lab-history-v1";
+const localLibraryStorageKey = "organic-lab-history-v1";
 
-function usesLocalHistory() {
+function usesLocalLibrary() {
   return window.location.hostname === "jalexsa.github.io"
     || window.location.protocol === "file:";
 }
 
-function readLocalHistory(): LocalHistoryState {
+function readLocalLibrary(): LocalLibraryState {
   try {
-    const stored = window.localStorage.getItem(localHistoryStorageKey);
-    if (!stored) return { draft: null, history: [] };
-    const parsed = JSON.parse(stored) as Partial<LocalHistoryState>;
+    const stored = window.localStorage.getItem(localLibraryStorageKey);
+    if (!stored) return { draft: null, history: [], saved: [] };
+    const parsed = JSON.parse(stored) as Partial<LocalLibraryState>;
     return {
       draft: parsed.draft?.molecule?.atoms?.length ? parsed.draft : null,
       history: Array.isArray(parsed.history)
         ? parsed.history.filter((entry) => entry?.molecule?.atoms?.length).slice(0, 50)
         : [],
+      saved: Array.isArray(parsed.saved)
+        ? parsed.saved.filter((entry) => entry?.molecule?.atoms?.length).slice(0, 200)
+        : [],
     };
   } catch {
-    return { draft: null, history: [] };
+    return { draft: null, history: [], saved: [] };
   }
 }
 
-function writeLocalHistory(state: LocalHistoryState) {
-  window.localStorage.setItem(localHistoryStorageKey, JSON.stringify(state));
+function writeLocalLibrary(state: LocalLibraryState) {
+  window.localStorage.setItem(localLibraryStorageKey, JSON.stringify(state));
 }
 
-function saveLocalHistoryEntry(payload: HistoryWritePayload) {
-  const state = readLocalHistory();
+function makeLocalEntry(payload: LocalLibraryWritePayload, existing?: HistoryEntry) {
   const now = new Date().toISOString();
-  const signature = JSON.stringify({
-    molecule: payload.molecule,
-    viewMode: payload.viewMode,
-  });
-  const existing = state.history.find((entry) => JSON.stringify({
-    molecule: entry.molecule,
-    viewMode: entry.viewMode,
-  }) === signature);
-  const id = existing?.id ?? (window.crypto?.randomUUID
-    ? window.crypto.randomUUID()
-    : `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`);
-  const entry: HistoryEntry = {
-    id,
+  return {
+    id: existing?.id ?? (window.crypto?.randomUUID
+      ? window.crypto.randomUUID()
+      : `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`),
     name: payload.name,
     formula: payload.formula,
     family: payload.family,
@@ -2591,21 +2586,50 @@ function saveLocalHistoryEntry(payload: HistoryWritePayload) {
     atomCount: payload.molecule.atoms.length,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
-  };
-  const history = mergeHistoryEntry(state.history, entry);
-  writeLocalHistory({
-    history,
+  } satisfies HistoryEntry;
+}
+
+function findMatchingLocalEntry(items: HistoryEntry[], payload: LocalLibraryWritePayload) {
+  const signature = JSON.stringify({ molecule: payload.molecule, viewMode: payload.viewMode });
+  return items.find((entry) => JSON.stringify({
+    molecule: entry.molecule,
+    viewMode: entry.viewMode,
+  }) === signature);
+}
+
+function saveLocalHistoryEntry(payload: LocalLibraryWritePayload) {
+  const state = readLocalLibrary();
+  const entry = makeLocalEntry(payload, findMatchingLocalEntry(state.history, payload));
+  writeLocalLibrary({
+    ...state,
+    history: mergeHistoryEntry(state.history, entry),
     draft: payload.updateDraft === false ? state.draft : entry,
   });
   return entry;
 }
 
-function removeLocalHistoryEntry(id: string) {
-  const state = readLocalHistory();
-  writeLocalHistory({
-    draft: state.draft?.id === id ? null : state.draft,
-    history: state.history.filter((entry) => entry.id !== id),
+function saveLocalSavedEntry(payload: LocalLibraryWritePayload) {
+  const state = readLocalLibrary();
+  const entry = makeLocalEntry(payload, findMatchingLocalEntry(state.saved, payload));
+  writeLocalLibrary({
+    ...state,
+    saved: mergeHistoryEntry(state.saved, entry, 200),
   });
+  return entry;
+}
+
+function removeLocalLibraryEntry(id: string, section: LibrarySection) {
+  const state = readLocalLibrary();
+  writeLocalLibrary(section === "history"
+    ? {
+        ...state,
+        draft: state.draft?.id === id ? null : state.draft,
+        history: state.history.filter((entry) => entry.id !== id),
+      }
+    : {
+        ...state,
+        saved: state.saved.filter((entry) => entry.id !== id),
+      });
 }
 
 function toPortableStructure(entry: HistoryEntry): PortableStructure {
@@ -2751,8 +2775,10 @@ export default function Home() {
   const [selectedId, setSelectedId] = useState(2);
   const [undoStack, setUndoStack] = useState<Molecule[]>([]);
   const [future, setFuture] = useState<Molecule[]>([]);
-  const [savedStructures, setSavedStructures] = useState<HistoryEntry[]>([]);
+  const [historyEntries, setHistoryEntries] = useState<HistoryEntry[]>([]);
+  const [savedEntries, setSavedEntries] = useState<HistoryEntry[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [librarySection, setLibrarySection] = useState<LibrarySection>("history");
   const [historyQuery, setHistoryQuery] = useState("");
   const [historyIdentity, setHistoryIdentity] = useState<string | null>(null);
   const [historyScope, setHistoryScope] = useState<HistoryScope>("device");
@@ -2760,6 +2786,7 @@ export default function Home() {
   const [historySyncState, setHistorySyncState] = useState<HistorySyncState>("loading");
   const [historyMessage, setHistoryMessage] = useState("Preparando tu historial…");
   const [historyImporting, setHistoryImporting] = useState(false);
+  const [savedBusy, setSavedBusy] = useState(false);
   const [historyTransferNotice, setHistoryTransferNotice] = useState<HistoryTransferNotice | null>(null);
   const [showHydrogens, setShowHydrogens] = useState(true);
   const [showNumbering, setShowNumbering] = useState(true);
@@ -2820,27 +2847,40 @@ export default function Home() {
         : analysis.family === "polycyclic"
           ? "Policíclico"
           : "Hidrocarburo");
-  const filteredSavedStructures = useMemo(() => {
+  const filteredHistoryEntries = useMemo(() => {
     const query = historyQuery.trim().toLocaleLowerCase("es");
-    if (!query) return savedStructures;
-    return savedStructures.filter((item) =>
+    if (!query) return historyEntries;
+    return historyEntries.filter((item) =>
       `${item.name} ${item.formula} ${item.family}`
         .toLocaleLowerCase("es")
         .includes(query),
     );
-  }, [historyQuery, savedStructures]);
+  }, [historyEntries, historyQuery]);
+  const filteredSavedEntries = useMemo(() => {
+    const query = historyQuery.trim().toLocaleLowerCase("es");
+    if (!query) return savedEntries;
+    return savedEntries.filter((item) =>
+      `${item.name} ${item.formula} ${item.family}`
+        .toLocaleLowerCase("es")
+        .includes(query),
+    );
+  }, [historyQuery, savedEntries]);
+  const filteredLibraryEntries = librarySection === "history"
+    ? filteredHistoryEntries
+    : filteredSavedEntries;
 
   useEffect(() => {
     let cancelled = false;
     const visitorId = getHistoryVisitorId();
 
-    if (usesLocalHistory()) {
-      const data = readLocalHistory();
-      const restoreLocalHistory = window.setTimeout(() => {
+    if (usesLocalLibrary()) {
+      const data = readLocalLibrary();
+      const restoreLocalLibrary = window.setTimeout(() => {
         if (cancelled) return;
         setHistoryIdentity(visitorId);
         setHistoryScope("device");
-        setSavedStructures(data.history);
+        setHistoryEntries(data.history);
+        setSavedEntries(data.saved);
         if (data.draft?.molecule?.atoms?.length) {
           const restored = cloneMolecule(data.draft.molecule);
           lastPersistedSignature.current = JSON.stringify({
@@ -2858,14 +2898,14 @@ export default function Home() {
       }, 0);
       return () => {
         cancelled = true;
-        window.clearTimeout(restoreLocalHistory);
+        window.clearTimeout(restoreLocalLibrary);
       };
     }
 
-    fetch("/api/history", {
-      headers: { "x-lab-visitor-id": visitorId },
-    })
-      .then(async (response) => {
+    Promise.all([
+      fetch("/api/history", {
+        headers: { "x-lab-visitor-id": visitorId },
+      }).then(async (response) => {
         const data = await response.json() as {
           scope?: HistoryScope;
           draft?: HistoryEntry | null;
@@ -2874,12 +2914,25 @@ export default function Home() {
         };
         if (!response.ok) throw new Error(data.error || "No se pudo cargar el historial.");
         return data;
-      })
-      .then((data) => {
+      }),
+      fetch("/api/saved", {
+        headers: { "x-lab-visitor-id": visitorId },
+      }).then(async (response) => {
+        const data = await response.json() as {
+          scope?: HistoryScope;
+          saved?: HistoryEntry[];
+          error?: string;
+        };
+        if (!response.ok) throw new Error(data.error || "No se pudo cargar Guardados.");
+        return data;
+      }),
+    ])
+      .then(([data, savedData]) => {
         if (cancelled) return;
         setHistoryIdentity(visitorId);
-        setHistoryScope(data.scope ?? "device");
-        setSavedStructures(data.history ?? []);
+        setHistoryScope(data.scope ?? savedData.scope ?? "device");
+        setHistoryEntries(data.history ?? []);
+        setSavedEntries(savedData.saved ?? []);
         if (data.draft?.molecule?.atoms?.length) {
           const restored = cloneMolecule(data.draft.molecule);
           lastPersistedSignature.current = JSON.stringify({
@@ -2962,10 +3015,9 @@ export default function Home() {
     const timer = window.setTimeout(() => {
       setHistorySyncState("saving");
       setHistoryMessage("Guardando esta estructura…");
-
-      if (usesLocalHistory()) {
+      if (usesLocalLibrary()) {
         try {
-          const item = saveLocalHistoryEntry({
+          const entry = saveLocalHistoryEntry({
             name: displayedIupacName,
             formula: analysis.formula,
             family: historyFamilyLabel,
@@ -2973,17 +3025,15 @@ export default function Home() {
             viewMode,
           });
           lastPersistedSignature.current = signature;
-          setSavedStructures((items) => mergeHistoryEntry(items, item));
-          setHistoryScope("device");
+          setHistoryEntries((items) => mergeHistoryEntry(items, entry));
           setHistorySyncState("saved");
           setHistoryMessage("Guardado para este navegador");
         } catch {
           setHistorySyncState("error");
-          setHistoryMessage("El navegador no permitió guardar esta estructura.");
+          setHistoryMessage("No se pudo guardar en este navegador.");
         }
         return;
       }
-
       fetch("/api/history", {
         method: "POST",
         headers: {
@@ -3011,7 +3061,7 @@ export default function Home() {
         .then((data) => {
           lastPersistedSignature.current = signature;
           if (data.item) {
-            setSavedStructures((items) => mergeHistoryEntry(items, data.item!));
+            setHistoryEntries((items) => mergeHistoryEntry(items, data.item!));
           }
           setHistoryScope(data.scope ?? historyScope);
           setHistorySyncState("saved");
@@ -3434,29 +3484,23 @@ export default function Home() {
 
   const saveCurrentStructure = async () => {
     if (!historyIdentity) return;
-    const signature = JSON.stringify({ molecule, viewMode });
-    setHistorySyncState("saving");
-    setHistoryMessage("Guardando esta estructura…");
+    setSavedBusy(true);
     try {
-      if (usesLocalHistory()) {
-        const item = saveLocalHistoryEntry({
+      if (usesLocalLibrary()) {
+        const item = saveLocalSavedEntry({
           name: displayedIupacName,
           formula: analysis.formula,
           family: historyFamilyLabel,
           molecule,
           viewMode,
         });
-        lastPersistedSignature.current = signature;
-        setSavedStructures((items) => mergeHistoryEntry(items, item));
-        setHistoryScope("device");
-        setHistorySyncState("saved");
-        setHistoryMessage("Guardado para este navegador");
-        setNotice(`${displayedIupacName} quedó guardado en tu historial.`);
+        setSavedEntries((items) => mergeHistoryEntry(items, item, 200));
+        setNotice(`${displayedIupacName} quedó añadido a Guardados.`);
+        setLibrarySection("saved");
         setHistoryOpen(true);
         return;
       }
-
-      const response = await fetch("/api/history", {
+      const response = await fetch("/api/saved", {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -3468,7 +3512,6 @@ export default function Home() {
           family: historyFamilyLabel,
           molecule,
           viewMode,
-          archive: true,
         }),
       });
       const data = await response.json() as {
@@ -3477,29 +3520,30 @@ export default function Home() {
         error?: string;
       };
       if (!response.ok) throw new Error(data.error || "No se pudo guardar.");
-      lastPersistedSignature.current = signature;
       if (data.item) {
-        setSavedStructures((items) => mergeHistoryEntry(items, data.item!));
+        setSavedEntries((items) => mergeHistoryEntry(items, data.item!, 200));
       }
       const scope = data.scope ?? historyScope;
       setHistoryScope(scope);
-      setHistorySyncState("saved");
-      setHistoryMessage(
-        scope === "account"
-          ? "Sincronizado con tu cuenta"
-          : "Guardado para este navegador",
-      );
-      setNotice(`${displayedIupacName} quedó guardado en tu historial.`);
+      setNotice(`${displayedIupacName} quedó añadido a Guardados.`);
+      setLibrarySection("saved");
       setHistoryOpen(true);
     } catch (error) {
-      setHistorySyncState("error");
-      setHistoryMessage(error instanceof Error ? error.message : "No se pudo guardar.");
+      setHistoryTransferNotice({
+        kind: "error",
+        message: error instanceof Error ? error.message : "No se pudo guardar.",
+      });
+    } finally {
+      setSavedBusy(false);
     }
   };
 
-  const restoreHistoryEntry = (entry: HistoryEntry) => {
+  const restoreLibraryEntry = (entry: HistoryEntry, source: LibrarySection) => {
     const restored = cloneMolecule(entry.molecule);
-    commit(restored, `Estructura recuperada del historial: ${entry.name}.`);
+    commit(
+      restored,
+      `Estructura recuperada de ${source === "saved" ? "Guardados" : "tu historial"}: ${entry.name}.`,
+    );
     setSelectedId(restored.atoms[0].id);
     setViewMode(entry.viewMode);
     setShowAlkylPalette(false);
@@ -3524,19 +3568,36 @@ export default function Home() {
   };
 
   const exportHistoryLibrary = () => {
-    if (!savedStructures.length) return;
+    if (!historyEntries.length) return;
     const document: ChemistryDocument = {
       format: "laboratorio-quimica-organica",
       version: 1,
       kind: "library",
       exportedAt: new Date().toISOString(),
-      structures: savedStructures.map(toPortableStructure),
+      structures: historyEntries.map(toPortableStructure),
     };
     const date = new Date().toISOString().slice(0, 10);
     downloadChemistryDocument(document, `mi-historial-quimico-${date}`);
     setHistoryTransferNotice({
       kind: "success",
-      message: `Biblioteca exportada con ${savedStructures.length} estructura${savedStructures.length === 1 ? "" : "s"}.`,
+      message: `Historial exportado con ${historyEntries.length} estructura${historyEntries.length === 1 ? "" : "s"}.`,
+    });
+  };
+
+  const exportSavedLibrary = () => {
+    if (!savedEntries.length) return;
+    const document: ChemistryDocument = {
+      format: "laboratorio-quimica-organica",
+      version: 1,
+      kind: "library",
+      exportedAt: new Date().toISOString(),
+      structures: savedEntries.map(toPortableStructure),
+    };
+    const date = new Date().toISOString().slice(0, 10);
+    downloadChemistryDocument(document, `mis-estructuras-guardadas-${date}`);
+    setHistoryTransferNotice({
+      kind: "success",
+      message: `Guardados exportado con ${savedEntries.length} estructura${savedEntries.length === 1 ? "" : "s"}.`,
     });
   };
 
@@ -3556,8 +3617,8 @@ export default function Home() {
       const importedEntries: HistoryEntry[] = [];
 
       for (const structure of structures) {
-        if (usesLocalHistory()) {
-          importedEntries.push(saveLocalHistoryEntry({
+        if (usesLocalLibrary()) {
+          importedEntries.push(saveLocalSavedEntry({
             name: structure.name,
             formula: structure.formula,
             family: structure.family,
@@ -3567,8 +3628,7 @@ export default function Home() {
           }));
           continue;
         }
-
-        const response = await fetch("/api/history", {
+        const response = await fetch("/api/saved", {
           method: "POST",
           headers: {
             "content-type": "application/json",
@@ -3580,8 +3640,6 @@ export default function Home() {
             family: structure.family,
             molecule: structure.molecule,
             viewMode: structure.viewMode,
-            archive: true,
-            updateDraft: false,
           }),
         });
         const data = await response.json() as {
@@ -3594,16 +3652,16 @@ export default function Home() {
         importedEntries.push(data.item);
       }
 
-      setSavedStructures((items) =>
+      setSavedEntries((items) =>
         importedEntries.reduce(
-          (current, entry) => mergeHistoryEntry(current, entry),
+          (current, entry) => mergeHistoryEntry(current, entry, 200),
           items,
         ),
       );
 
       if (importedEntries.length === 1) {
         const [entry] = importedEntries;
-        restoreHistoryEntry(entry);
+        restoreLibraryEntry(entry, "saved");
         setNotice(`${entry.name} se importó desde ${file.name} y está lista para editar.`);
       } else {
         setHistoryTransferNotice({
@@ -3628,24 +3686,49 @@ export default function Home() {
     if (!historyIdentity) return;
     if (!window.confirm(`¿Eliminar “${entry.name}” de tu historial?`)) return;
     try {
-      if (usesLocalHistory()) {
-        removeLocalHistoryEntry(entry.id);
-        setSavedStructures((items) => items.filter((item) => item.id !== entry.id));
+      if (usesLocalLibrary()) {
+        removeLocalLibraryEntry(entry.id, "history");
+        setHistoryEntries((items) => items.filter((item) => item.id !== entry.id));
         setNotice(`${entry.name} se eliminó del historial.`);
         return;
       }
-
       const response = await fetch(`/api/history?id=${encodeURIComponent(entry.id)}`, {
         method: "DELETE",
         headers: { "x-lab-visitor-id": historyIdentity },
       });
       const data = await response.json() as { error?: string };
       if (!response.ok) throw new Error(data.error || "No se pudo eliminar.");
-      setSavedStructures((items) => items.filter((item) => item.id !== entry.id));
+      setHistoryEntries((items) => items.filter((item) => item.id !== entry.id));
       setNotice(`${entry.name} se eliminó del historial.`);
     } catch (error) {
       setHistorySyncState("error");
       setHistoryMessage(error instanceof Error ? error.message : "No se pudo eliminar.");
+    }
+  };
+
+  const deleteSavedEntry = async (entry: HistoryEntry) => {
+    if (!historyIdentity) return;
+    if (!window.confirm(`¿Eliminar “${entry.name}” de Guardados?`)) return;
+    try {
+      if (usesLocalLibrary()) {
+        removeLocalLibraryEntry(entry.id, "saved");
+        setSavedEntries((items) => items.filter((item) => item.id !== entry.id));
+        setNotice(`${entry.name} se eliminó de Guardados.`);
+        return;
+      }
+      const response = await fetch(`/api/saved?id=${encodeURIComponent(entry.id)}`, {
+        method: "DELETE",
+        headers: { "x-lab-visitor-id": historyIdentity },
+      });
+      const data = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(data.error || "No se pudo eliminar.");
+      setSavedEntries((items) => items.filter((item) => item.id !== entry.id));
+      setNotice(`${entry.name} se eliminó de Guardados.`);
+    } catch (error) {
+      setHistoryTransferNotice({
+        kind: "error",
+        message: error instanceof Error ? error.message : "No se pudo eliminar.",
+      });
     }
   };
 
@@ -3853,16 +3936,37 @@ export default function Home() {
         <div className="header-actions">
           <button
             className="personal-history-control"
-            onClick={() => setHistoryOpen(true)}
-            aria-label={`Abrir mi historial. ${savedStructures.length} estructuras guardadas`}
+            onClick={() => {
+              setLibrarySection("history");
+              setHistoryQuery("");
+              setHistoryOpen(true);
+            }}
+            aria-label={`Abrir mi historial. ${historyEntries.length} versiones recientes`}
             aria-haspopup="dialog"
           >
             <span className="personal-history-icon" aria-hidden="true">↺</span>
             <span className="personal-history-copy">
-              Mi historial
+              Historial
               <small>{historySyncState === "saving" ? "Guardando…" : "Siempre disponible"}</small>
             </span>
-            <strong>{savedStructures.length}</strong>
+            <strong>{historyEntries.length}</strong>
+          </button>
+          <button
+            className="personal-history-control personal-saved-control"
+            onClick={() => {
+              setLibrarySection("saved");
+              setHistoryQuery("");
+              setHistoryOpen(true);
+            }}
+            aria-label={`Abrir Guardados. ${savedEntries.length} estructuras elegidas`}
+            aria-haspopup="dialog"
+          >
+            <span className="personal-history-icon" aria-hidden="true">★</span>
+            <span className="personal-history-copy">
+              Guardados
+              <small>Elegidos por ti</small>
+            </span>
+            <strong>{savedEntries.length}</strong>
           </button>
           <button
             className="theme-control"
@@ -3896,7 +4000,7 @@ export default function Home() {
             <div className="history-drawer-heading">
               <div>
                 <p className="eyebrow">Biblioteca personal</p>
-                <h2 id="history-title">Mi historial químico</h2>
+                <h2 id="history-title">Mi laboratorio químico</h2>
               </div>
               <button
                 className="history-close"
@@ -3907,29 +4011,75 @@ export default function Home() {
               </button>
             </div>
 
-            <div className="history-transfer-toolbar" aria-label="Importar y exportar documentos químicos">
-              <label className={historyImporting || !historyIdentity ? "disabled" : ""}>
-                <span aria-hidden="true">↑</span>
-                {historyImporting ? "Importando…" : "Importar .quimica"}
-                <input
-                  type="file"
-                  accept=".quimica,.json,application/json"
-                  onChange={importChemistryDocument}
-                  disabled={historyImporting || !historyIdentity}
-                  aria-label="Importar documento químico"
-                />
-              </label>
+            <div className="library-tabs" role="tablist" aria-label="Secciones de mi laboratorio">
               <button
-                onClick={exportHistoryLibrary}
-                disabled={!savedStructures.length}
-                title={savedStructures.length
-                  ? "Descargar toda la biblioteca en un único documento"
-                  : "Guarda una estructura antes de exportar la biblioteca"}
+                className={librarySection === "history" ? "active" : ""}
+                onClick={() => {
+                  setLibrarySection("history");
+                  setHistoryQuery("");
+                  setHistoryTransferNotice(null);
+                }}
+                role="tab"
+                aria-selected={librarySection === "history"}
               >
-                <span aria-hidden="true">↓</span>
-                Exportar biblioteca
+                <span aria-hidden="true">↺</span>
+                <span>Historial<small>Automático</small></span>
+                <strong>{historyEntries.length}</strong>
+              </button>
+              <button
+                className={librarySection === "saved" ? "active" : ""}
+                onClick={() => {
+                  setLibrarySection("saved");
+                  setHistoryQuery("");
+                  setHistoryTransferNotice(null);
+                }}
+                role="tab"
+                aria-selected={librarySection === "saved"}
+              >
+                <span aria-hidden="true">★</span>
+                <span>Guardados<small>Elegidos por ti</small></span>
+                <strong>{savedEntries.length}</strong>
               </button>
             </div>
+
+            {librarySection === "history" ? (
+              <div className="history-transfer-toolbar single-action" aria-label="Exportar historial químico">
+                <button
+                  onClick={exportHistoryLibrary}
+                  disabled={!historyEntries.length}
+                  title={historyEntries.length
+                    ? "Descargar el historial en un único documento"
+                    : "El historial todavía no contiene estructuras"}
+                >
+                  <span aria-hidden="true">↓</span>
+                  Exportar historial
+                </button>
+              </div>
+            ) : (
+              <div className="history-transfer-toolbar" aria-label="Importar y exportar estructuras guardadas">
+                <label className={historyImporting || !historyIdentity ? "disabled" : ""}>
+                  <span aria-hidden="true">↑</span>
+                  {historyImporting ? "Importando…" : "Importar .quimica"}
+                  <input
+                    type="file"
+                    accept=".quimica,.json,application/json"
+                    onChange={importChemistryDocument}
+                    disabled={historyImporting || !historyIdentity}
+                    aria-label="Importar documento químico a Guardados"
+                  />
+                </label>
+                <button
+                  onClick={exportSavedLibrary}
+                  disabled={!savedEntries.length}
+                  title={savedEntries.length
+                    ? "Descargar todas las estructuras guardadas en un único documento"
+                    : "Añade una estructura a Guardados antes de exportar"}
+                >
+                  <span aria-hidden="true">↓</span>
+                  Exportar guardados
+                </button>
+              </div>
+            )}
 
             {historyTransferNotice && (
               <div className={`history-transfer-notice transfer-${historyTransferNotice.kind}`} role="status">
@@ -3944,29 +4094,31 @@ export default function Home() {
               </div>
             )}
 
-            <div className="history-current-card">
-              <MoleculeHistoryPreview molecule={molecule} />
-              <div>
-                <span>Estructura actual</span>
-                <strong>{displayedIupacName}</strong>
-                <small>{analysis.formula} · {historyFamilyLabel}</small>
+            {librarySection === "saved" ? (
+              <div className="history-current-card">
+                <MoleculeHistoryPreview molecule={molecule} />
+                <div>
+                  <span>Estructura actual</span>
+                  <strong>{displayedIupacName}</strong>
+                  <small>{analysis.formula} · {historyFamilyLabel}</small>
+                </div>
+                <button onClick={saveCurrentStructure} disabled={!historyIdentity || savedBusy}>
+                  {savedBusy ? "Guardando…" : "Añadir a Guardados"}
+                </button>
               </div>
-              <button onClick={saveCurrentStructure} disabled={!historyIdentity || historySyncState === "saving"}>
-                {historySyncState === "saving" ? "Guardando…" : "Guardar ahora"}
-              </button>
-            </div>
-
-            <div className={`history-sync history-sync-${historySyncState}`} role="status">
-              <span aria-hidden="true" />
-              <div>
-                <strong>{historyMessage}</strong>
-                <small>
-                  {historyScope === "account"
-                    ? "Tus estructuras se recuperan cuando vuelves con la misma cuenta."
-                    : "Tus estructuras se recuperan cuando vuelves desde este navegador."}
-                </small>
+            ) : (
+              <div className={`history-sync history-sync-${historySyncState}`} role="status">
+                <span aria-hidden="true" />
+                <div>
+                  <strong>{historyMessage}</strong>
+                  <small>
+                    {historyScope === "account"
+                      ? "El historial se recupera cuando vuelves con la misma cuenta."
+                      : "El historial se recupera cuando vuelves desde este navegador."}
+                  </small>
+                </div>
               </div>
-            </div>
+            )}
 
             <label className="history-search">
               <span aria-hidden="true">⌕</span>
@@ -3974,8 +4126,8 @@ export default function Home() {
                 type="search"
                 value={historyQuery}
                 onChange={(event) => setHistoryQuery(event.target.value)}
-                placeholder="Buscar por nombre, fórmula o familia"
-                aria-label="Buscar en mi historial"
+                placeholder={`Buscar en ${librarySection === "history" ? "el historial" : "Guardados"}`}
+                aria-label={`Buscar en ${librarySection === "history" ? "mi historial" : "Guardados"}`}
               />
               {historyQuery && (
                 <button onClick={() => setHistoryQuery("")} aria-label="Limpiar búsqueda">×</button>
@@ -3984,10 +4136,14 @@ export default function Home() {
 
             <div className="history-list-heading">
               <div>
-                <strong>Versiones recientes</strong>
-                <small>Se guarda una versión única después de cada pausa.</small>
+                <strong>{librarySection === "history" ? "Versiones recientes" : "Estructuras guardadas"}</strong>
+                <small>
+                  {librarySection === "history"
+                    ? "Se guarda una versión única después de cada pausa."
+                    : "Esta sección solo contiene lo que decides conservar."}
+                </small>
               </div>
-              <span>{filteredSavedStructures.length}</span>
+              <span>{filteredLibraryEntries.length}</span>
             </div>
 
             <div className="history-list">
@@ -3996,12 +4152,12 @@ export default function Home() {
                   <span className="history-loader" aria-hidden="true" />
                   <strong>Cargando tus estructuras…</strong>
                 </div>
-              ) : filteredSavedStructures.length ? (
-                filteredSavedStructures.map((entry) => (
+              ) : filteredLibraryEntries.length ? (
+                filteredLibraryEntries.map((entry) => (
                   <article className="history-item" key={entry.id}>
                     <button
                       className="history-item-open"
-                      onClick={() => restoreHistoryEntry(entry)}
+                      onClick={() => restoreLibraryEntry(entry, librarySection)}
                       aria-label={`Abrir ${entry.name}`}
                     >
                       <MoleculeHistoryPreview molecule={entry.molecule} />
@@ -4022,9 +4178,11 @@ export default function Home() {
                       </button>
                       <button
                         className="history-delete"
-                        onClick={() => deleteHistoryEntry(entry)}
-                        aria-label={`Eliminar ${entry.name} del historial`}
-                        title="Eliminar del historial"
+                        onClick={() => librarySection === "history"
+                          ? deleteHistoryEntry(entry)
+                          : deleteSavedEntry(entry)}
+                        aria-label={`Eliminar ${entry.name} de ${librarySection === "history" ? "mi historial" : "Guardados"}`}
+                        title={librarySection === "history" ? "Eliminar del historial" : "Eliminar de Guardados"}
                       >
                         ×
                       </button>
@@ -4034,11 +4192,19 @@ export default function Home() {
               ) : (
                 <div className="history-empty">
                   <span aria-hidden="true">⌬</span>
-                  <strong>{historyQuery ? "No encontramos coincidencias" : "Tu historial comienza aquí"}</strong>
+                  <strong>
+                    {historyQuery
+                      ? "No encontramos coincidencias"
+                      : librarySection === "history"
+                        ? "Tu historial comienza aquí"
+                        : "Todavía no tienes estructuras guardadas"}
+                  </strong>
                   <p>
                     {historyQuery
                       ? "Prueba con el nombre IUPAC, la fórmula o la familia del compuesto."
-                      : "Construye una molécula o importa un archivo .quimica. Podrás editarla y volver a exportarla cuando quieras."}
+                      : librarySection === "history"
+                        ? "Construye una molécula y aparecerán aquí sus versiones recientes."
+                        : "Añade la estructura actual o importa un archivo .quimica para conservarlo aparte del historial."}
                   </p>
                 </div>
               )}
@@ -4046,7 +4212,7 @@ export default function Home() {
 
             <p className="history-privacy-note">
               <span aria-hidden="true">✓</span>
-              Cada visitante ve únicamente su propia biblioteca de estructuras.
+              Historial y Guardados permanecen separados y cada visitante ve únicamente sus propias estructuras.
             </p>
           </aside>
         </div>
@@ -4127,9 +4293,9 @@ export default function Home() {
                 <span className="name-builder-mark" aria-hidden="true">Aa</span>
                 <div>
                   <strong>Construir por nombre IUPAC</strong>
-                  <small>Escribe el nombre y el laboratorio dibujará la conectividad automáticamente.</small>
+                  <small>Escribe un hidrocarburo o alcohol y el laboratorio dibujará su conectividad automáticamente.</small>
                 </div>
-                <span className="name-builder-scope">Hidrocarburos</span>
+                <span className="name-builder-scope">Hidrocarburos · alcoholes</span>
               </div>
 
               <div className="name-builder-field-row">
@@ -4143,7 +4309,7 @@ export default function Home() {
                       setIupacInput(event.target.value);
                       setNameBuilderFeedback(null);
                     }}
-                    placeholder="Ej.: 3-etil-2-metilhexano"
+                    placeholder="Ej.: benceno-1,3,5-triol"
                     autoComplete="off"
                     spellCheck={false}
                     aria-describedby="name-builder-help"
@@ -4158,7 +4324,7 @@ export default function Home() {
               <div className="name-builder-footer" id="name-builder-help">
                 <div className="name-builder-examples" aria-label="Ejemplos de nombres compatibles">
                   <span>Prueba:</span>
-                  {["hex-2-eno", "3-etil-2-metilhexano", "1,4-dimetilciclohexano", "tolueno"].map((example) => (
+                  {["benceno-1,3,5-triol", "propan-2-ol", "3-etil-2-metilhexano", "tolueno"].map((example) => (
                     <button
                       type="button"
                       key={example}
@@ -4171,7 +4337,7 @@ export default function Home() {
                     </button>
                   ))}
                 </div>
-                <small>Admite alcanos, alquenos, alquinos, ciclos, benceno y sustituyentes alquilo.</small>
+                <small>Admite cadenas, ciclos, aromáticos, alcoholes y polioles como benceno-1,3,5-triol.</small>
               </div>
 
               {nameBuilderFeedback && (

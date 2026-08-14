@@ -123,6 +123,24 @@ button {
   font-size: 9px;
 }
 
+.personal-saved-control {
+  border-color: #ead8ad;
+  color: #76591f;
+}
+
+.personal-saved-control:hover {
+  border-color: #d4b76f;
+}
+
+.personal-saved-control .personal-history-icon {
+  background: #fbf0d6;
+  color: #966c1d;
+}
+
+.personal-saved-control > strong {
+  background: #956a1c;
+}
+
 .history-overlay {
   position: fixed;
   z-index: 100;
@@ -188,6 +206,90 @@ button {
   letter-spacing: -0.03em;
 }
 
+.library-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 4px;
+  border: 1px solid #d5e4df;
+  border-radius: 15px;
+  background: rgba(232, 241, 237, 0.7);
+}
+
+.library-tabs button {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  background: transparent;
+  color: #62756f;
+  cursor: pointer;
+  text-align: left;
+  transition: 150ms ease;
+}
+
+.library-tabs button:hover {
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.library-tabs button.active {
+  border-color: #b8d8cd;
+  background: #ffffff;
+  color: #286958;
+  box-shadow: 0 5px 14px rgba(38, 87, 73, 0.08);
+}
+
+.library-tabs button:nth-child(2).active {
+  border-color: #e3cb92;
+  color: #80601f;
+}
+
+.library-tabs button > span:first-child {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 9px;
+  background: #dff0ea;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.library-tabs button:nth-child(2) > span:first-child {
+  background: #f8edcf;
+  color: #8d651c;
+}
+
+.library-tabs button > span:nth-child(2) {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.library-tabs button small {
+  margin-top: 1px;
+  color: #899892;
+  font-size: 7px;
+  font-weight: 600;
+}
+
+.library-tabs button > strong {
+  min-width: 22px;
+  padding: 4px 6px;
+  border-radius: 999px;
+  background: #e3eee9;
+  color: #49675f;
+  font-size: 8px;
+  text-align: center;
+}
+
 .history-close {
   display: grid;
   flex: 0 0 37px;
@@ -208,6 +310,10 @@ button {
   grid-template-columns: 1fr 1fr;
   gap: 8px;
   margin-bottom: 10px;
+}
+
+.history-transfer-toolbar.single-action {
+  grid-template-columns: 1fr;
 }
 
 .history-transfer-toolbar > label,
@@ -3271,6 +3377,25 @@ html[data-theme="dark"] .personal-history-control > strong {
   color: #10251f;
 }
 
+html[data-theme="dark"] .personal-saved-control {
+  border-color: #675a39;
+  color: #e1c47f;
+}
+
+html[data-theme="dark"] .personal-saved-control:hover {
+  border-color: #917a43;
+}
+
+html[data-theme="dark"] .personal-saved-control .personal-history-icon {
+  background: #4b3e24;
+  color: #e7c46f;
+}
+
+html[data-theme="dark"] .personal-saved-control > strong {
+  background: #d1ac57;
+  color: #281f0e;
+}
+
 html[data-theme="dark"] .history-scrim {
   background: rgba(2, 10, 8, 0.62);
 }
@@ -3287,6 +3412,49 @@ html[data-theme="dark"] .history-drawer-heading h2,
 html[data-theme="dark"] .history-item-copy strong,
 html[data-theme="dark"] .history-search input {
   color: #d4e5df;
+}
+
+html[data-theme="dark"] .library-tabs {
+  border-color: #334941;
+  background: rgba(24, 39, 34, 0.8);
+}
+
+html[data-theme="dark"] .library-tabs button {
+  color: #91a49e;
+}
+
+html[data-theme="dark"] .library-tabs button:hover {
+  background: #1c2d28;
+}
+
+html[data-theme="dark"] .library-tabs button.active {
+  border-color: #426d5f;
+  background: #21362f;
+  color: #a7dbc9;
+  box-shadow: 0 5px 14px rgba(0, 0, 0, 0.16);
+}
+
+html[data-theme="dark"] .library-tabs button:nth-child(2).active {
+  border-color: #705f36;
+  color: #e0c37c;
+}
+
+html[data-theme="dark"] .library-tabs button > span:first-child {
+  background: #28493f;
+}
+
+html[data-theme="dark"] .library-tabs button:nth-child(2) > span:first-child {
+  background: #4b3e24;
+  color: #e2bf68;
+}
+
+html[data-theme="dark"] .library-tabs button small {
+  color: #7f948d;
+}
+
+html[data-theme="dark"] .library-tabs button > strong {
+  background: #30483f;
+  color: #b3c8c1;
 }
 
 html[data-theme="dark"] .history-close,

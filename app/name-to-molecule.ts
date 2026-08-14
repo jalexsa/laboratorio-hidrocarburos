@@ -6,7 +6,7 @@ export type GeneratedAtom = {
   id: number;
   x: number;
   y: number;
-  element?: "C";
+  element?: "C" | "O";
 };
 
 export type GeneratedRing = {
@@ -386,6 +386,82 @@ function parseHydrocarbonName(name: string): ParsedName | null {
   return null;
 }
 
+const alcoholMultiplierCounts: Record<string, number> = {
+  "": 1,
+  di: 2,
+  tri: 3,
+  tetra: 4,
+  penta: 5,
+  hexa: 6,
+};
+
+function hydrocarbonParentFromAlcoholStem(value: string) {
+  if (value.endsWith("ano") || value.endsWith("eno") || value.endsWith("ino") || value === "benceno") {
+    return value;
+  }
+  if (value.endsWith("an") || value.endsWith("en") || value.endsWith("in")) {
+    return `${value}o`;
+  }
+  return value;
+}
+
+function attachHydroxylGroups(
+  molecule: GeneratedMolecule,
+  parent: ParentDescription,
+  locants: number[],
+) {
+  let nextId = Math.max(...molecule.atoms.map((atom) => atom.id)) + 1;
+  locants.forEach((locant, index) => {
+    const anchor = molecule.atoms.find((atom) => atom.id === locant);
+    if (!anchor) return;
+
+    let outwardX = 0;
+    let outwardY = index % 2 === 0 ? -1 : 1;
+    if (parent.kind !== "chain") {
+      const length = Math.hypot(anchor.x, anchor.y) || 1;
+      outwardX = anchor.x / length;
+      outwardY = anchor.y / length;
+    }
+
+    molecule.atoms.push({
+      id: nextId,
+      x: anchor.x + outwardX * 1.15,
+      y: anchor.y + outwardY * 1.15,
+      element: "O",
+    });
+    molecule.bonds.push([anchor.id, nextId, 1]);
+    nextId += 1;
+  });
+}
+
+function parseAlcoholName(name: string): ParsedName | null {
+  const phenolLocants = name === "fenol" ? [1] : null;
+  const match = phenolLocants
+    ? null
+    : name.match(/^(.*)-(\d+(?:,\d+)*)-(di|tri|tetra|penta|hexa)?ol$/);
+  if (!phenolLocants && !match) return null;
+
+  const locants = phenolLocants ?? parseLocants(match?.[2] ?? "");
+  const multiplier = phenolLocants ? "" : (match?.[3] ?? "");
+  if (!locants || locants.length !== alcoholMultiplierCounts[multiplier]) return null;
+  if (new Set(locants).size !== locants.length) return null;
+
+  const hydrocarbonName = phenolLocants
+    ? "benceno"
+    : hydrocarbonParentFromAlcoholStem(match?.[1] ?? "");
+  const parsedParent = parseHydrocarbonName(hydrocarbonName);
+  if (!parsedParent) return null;
+  if (locants.some((locant) => locant < 1 || locant > parsedParent.parent.size)) return null;
+
+  const molecule = graphForParsedName(parsedParent);
+  attachHydroxylGroups(molecule, parsedParent.parent, locants);
+  return {
+    ...parsedParent,
+    normalizedInput: name,
+    prebuiltMolecule: molecule,
+  };
+}
+
 function makeChain(size: number): GeneratedMolecule {
   return {
     atoms: Array.from({ length: size }, (_, index) => ({ id: index + 1, x: index, y: 0 })),
@@ -584,11 +660,11 @@ export function buildHydrocarbonFromIupacName(value: string): NameBuildResult {
     return { ok: false, error: "Escribe un nombre, por ejemplo: 3-etil-2-metilhexano." };
   }
 
-  const parsed = parseHydrocarbonName(normalizedInput);
+  const parsed = parseAlcoholName(normalizedInput) ?? parseHydrocarbonName(normalizedInput);
   if (!parsed) {
     return {
       ok: false,
-      error: "No pude separar la cadena o el ciclo principal de sus sustituyentes. Prueba con un nombre como hex-2-eno, 3-etil-2-metilhexano o 1,4-dimetilciclohexano.",
+      error: "No pude interpretar la cadena, el ciclo o sus grupos funcionales. Prueba con hex-2-eno, 3-etil-2-metilhexano, propan-2-ol o benceno-1,3,5-triol.",
     };
   }
 
