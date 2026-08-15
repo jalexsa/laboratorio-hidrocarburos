@@ -7,8 +7,7 @@ en vista semidesarrollada o esquelética. Incluye hidrocarburos, ciclos,
 aromáticos, grupos funcionales, un constructor desde nombres IUPAC y una
 biblioteca personal importable y exportable mediante archivos `.quimica`.
 
-- Sitio principal: https://laboratorio-hidrocarburos.jalexsa.chatgpt.site
-- GitHub Pages: https://jalexsa.github.io/laboratorio-hidrocarburos/
+- GitHub Pages: https://sciuscience-dotcom.github.io/laboratorio-hidrocarburos/
 
 La versión de GitHub Pages se genera automáticamente desde la rama `main` con
 `npm run build:pages`. En GitHub Pages, el historial queda guardado localmente
