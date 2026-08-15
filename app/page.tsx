@@ -3,6 +3,7 @@
 import {
   type ChangeEvent,
   type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   useEffect,
   useMemo,
   useRef,
@@ -420,6 +421,101 @@ const getValenceUsed = (atomId: number, molecule: Molecule) =>
     (total, bond) => total + (bond[0] === atomId || bond[1] === atomId ? getBondOrder(bond) : 0),
     0,
   );
+
+export type ValenceViolation = {
+  atomId: number;
+  element: ChemicalElement;
+  current: number;
+  attempted: number;
+  limit: number;
+};
+
+export function getAtomValenceViolation(
+  molecule: Molecule,
+  atomId: number,
+  addedValence: number,
+): ValenceViolation | null {
+  const atom = getAtom(atomId, molecule);
+  if (!atom) return null;
+  const element = getElement(atom);
+  const current = getValenceUsed(atomId, molecule);
+  const limit = elementValences[element];
+  const attempted = current + addedValence;
+  return attempted > limit
+    ? { atomId, element, current, attempted, limit }
+    : null;
+}
+
+export function findBondValenceViolation(
+  molecule: Molecule,
+  a: number,
+  b: number,
+  nextOrder: BondOrder,
+  currentOrder: BondOrder | 0 = 0,
+): ValenceViolation | null {
+  const addedValence = nextOrder - currentOrder;
+  if (addedValence <= 0) return null;
+  return getAtomValenceViolation(molecule, a, addedValence)
+    ?? getAtomValenceViolation(molecule, b, addedValence);
+}
+
+export function findMoleculeValenceViolation(molecule: Molecule): ValenceViolation | null {
+  for (const atom of molecule.atoms) {
+    const current = getValenceUsed(atom.id, molecule);
+    const element = getElement(atom);
+    const limit = elementValences[element];
+    if (current > limit) {
+      return { atomId: atom.id, element, current, attempted: current, limit };
+    }
+  }
+  return null;
+}
+
+const titleCaseElement = (element: ChemicalElement) => {
+  const label = elementNames[element];
+  return `${label[0].toUpperCase()}${label.slice(1)}`;
+};
+
+export function formatBondValenceError(
+  order: BondOrder,
+  violation: ValenceViolation,
+) {
+  const atomLabel = `${titleCaseElement(violation.element)} ${violation.atomId}`;
+  if (violation.current >= violation.limit) {
+    return `No se puede añadir un enlace ${getBondOrderLabel(order)} en el ${atomLabel} porque ya tiene ${violation.current} enlaces.`;
+  }
+  return `No se puede añadir un enlace ${getBondOrderLabel(order)} en el ${atomLabel} porque alcanzaría ${violation.attempted} enlaces y su máximo es ${violation.limit}.`;
+}
+
+export function findDirectionalNeighborId(
+  molecule: Molecule,
+  atomId: number,
+  dx: number,
+  dy: number,
+) {
+  const atom = getAtom(atomId, molecule);
+  if (!atom) return null;
+  const length = Math.hypot(dx, dy) || 1;
+  const direction = { x: dx / length, y: dy / length };
+  const candidates = atomNeighbors(atomId, molecule).flatMap((neighbor) => {
+    const candidate = getAtom(neighbor.atomId, molecule);
+    if (!candidate) return [];
+    const deltaX = candidate.x - atom.x;
+    const deltaY = candidate.y - atom.y;
+    const distance = Math.hypot(deltaX, deltaY) || 1;
+    const projection = deltaX * direction.x + deltaY * direction.y;
+    if (projection <= 0.05) return [];
+    return [{
+      id: candidate.id,
+      alignment: projection / distance,
+      distance,
+    }];
+  });
+  candidates.sort((left, right) =>
+    right.alignment - left.alignment || left.distance - right.distance,
+  );
+  return candidates[0]?.id ?? null;
+}
 
 const getImplicitHydrogens = (atomId: number, molecule: Molecule) =>
   Math.max(0, getValenceLimit(atomId, molecule) - getValenceUsed(atomId, molecule));
@@ -3242,6 +3338,7 @@ export default function Home() {
   const [automaticDark, setAutomaticDark] = useState(false);
   const [showCreatorCredit, setShowCreatorCredit] = useState(false);
   const [notice, setNotice] = useState("Selecciona un carbono para añadir otro o toca un enlace para cambiar su orden.");
+  const [valenceAlert, setValenceAlert] = useState<string | null>(null);
   const [nameBuilderOpen, setNameBuilderOpen] = useState(true);
   const [iupacInput, setIupacInput] = useState("");
   const [nameBuilderBusy, setNameBuilderBusy] = useState(false);
@@ -3249,6 +3346,8 @@ export default function Home() {
   const [reasoningSourceName, setReasoningSourceName] = useState<string | null>(null);
   const [sourceNameOverride, setSourceNameOverride] = useState<string | null>(null);
   const lastPersistedSignature = useRef("");
+  const previousSelectedId = useRef<number | null>(null);
+  const valenceAlertTimer = useRef<number | null>(null);
 
   const adjacency = useMemo(() => buildAdjacency(molecule), [molecule]);
   const analysis = useMemo(() => {
@@ -3577,13 +3676,46 @@ export default function Home() {
     viewMode,
   ]);
 
+  const dismissValenceAlert = () => {
+    if (valenceAlertTimer.current !== null) {
+      window.clearTimeout(valenceAlertTimer.current);
+      valenceAlertTimer.current = null;
+    }
+    setValenceAlert(null);
+  };
+
+  const showValenceError = (message: string) => {
+    if (valenceAlertTimer.current !== null) {
+      window.clearTimeout(valenceAlertTimer.current);
+    }
+    setValenceAlert(message);
+    valenceAlertTimer.current = window.setTimeout(() => {
+      setValenceAlert(null);
+      valenceAlertTimer.current = null;
+    }, 3600);
+  };
+
+  useEffect(() => () => {
+    if (valenceAlertTimer.current !== null) {
+      window.clearTimeout(valenceAlertTimer.current);
+    }
+  }, []);
+
   const commit = (next: Molecule, message: string) => {
+    const violation = findMoleculeValenceViolation(next);
+    if (violation) {
+      showValenceError(
+        `Acción bloqueada: el ${titleCaseElement(violation.element)} ${violation.atomId} quedaría con ${violation.attempted} enlaces y su máximo es ${violation.limit}.`,
+      );
+      return false;
+    }
     setUndoStack((items) => [...items, cloneMolecule(molecule)]);
     setFuture([]);
     setMolecule(next);
     setReasoningSourceName(null);
     setSourceNameOverride(null);
     setNotice(message);
+    return true;
   };
 
   const constructFromIupacName = async (event: FormEvent<HTMLFormElement>) => {
@@ -3723,12 +3855,9 @@ export default function Home() {
       setNotice("En los ciclos de esta etapa, los sustituyentes se conectan al anillo con enlaces simples.");
       return;
     }
-    const selectedValence = getValenceUsed(selectedAtom.id, molecule);
-    const selectedLimit = getValenceLimit(selectedAtom.id, molecule);
-    if (selectedValence + newBondOrder > selectedLimit) {
-      setNotice(
-        `No se puede añadir un enlace ${getBondOrderLabel(newBondOrder)}: el ${elementNames[getElement(selectedAtom)]} seleccionado superaría su valencia ${selectedLimit}.`,
-      );
+    const violation = getAtomValenceViolation(molecule, selectedAtom.id, newBondOrder);
+    if (violation) {
+      showValenceError(formatBondValenceError(newBondOrder, violation));
       return;
     }
     const targetX = selectedAtom.x + dx;
@@ -3743,10 +3872,12 @@ export default function Home() {
       atoms: [...molecule.atoms, { id: nextId, x: targetX, y: targetY, element: "C" }],
       bonds: [...molecule.bonds, [selectedAtom.id, nextId, newBondOrder] as Bond],
     };
-    commit(
+    const committed = commit(
       next,
       `Carbono añadido al ${elementNames[getElement(selectedAtom)]} con enlace ${getBondOrderLabel(newBondOrder)}. El nombre se recalculó automáticamente.`,
     );
+    if (!committed) return;
+    previousSelectedId.current = selectedAtom.id;
     setSelectedId(nextId);
   };
 
@@ -3801,14 +3932,11 @@ export default function Home() {
 
     const nextOrder = (currentOrder === 3 ? 1 : currentOrder + 1) as BondOrder;
     const extraValence = nextOrder - currentOrder;
-    if (
-      extraValence > 0
-      && (getValenceUsed(a, molecule) + extraValence > getValenceLimit(a, molecule)
-        || getValenceUsed(b, molecule) + extraValence > getValenceLimit(b, molecule))
-    ) {
-      setNotice(
-        `Cambio imposible: el enlace ${getBondOrderLabel(nextOrder)} superaría la valencia permitida de uno de sus átomos.`,
-      );
+    const violation = extraValence > 0
+      ? findBondValenceViolation(molecule, a, b, nextOrder, currentOrder)
+      : null;
+    if (violation) {
+      showValenceError(formatBondValenceError(nextOrder, violation));
       return;
     }
 
@@ -3826,8 +3954,9 @@ export default function Home() {
       setNotice("Selecciona un carbono para añadir un grupo alquilo.");
       return;
     }
-    if (getValenceUsed(selectedAtom.id, molecule) + 1 > 4) {
-      setNotice("Ese carbono ya tiene cuatro enlaces. Selecciona otro para añadir el grupo alquilo.");
+    const attachmentViolation = getAtomValenceViolation(molecule, selectedAtom.id, 1);
+    if (attachmentViolation) {
+      showValenceError(formatBondValenceError(1, attachmentViolation));
       return;
     }
 
@@ -3889,6 +4018,7 @@ export default function Home() {
     };
 
     commit(next, `${template.label} añadido. La cadena principal y el nombre se recalcularon.`);
+    previousSelectedId.current = selectedAtom.id;
     setSelectedId(idMap[0]);
   };
 
@@ -3930,8 +4060,15 @@ export default function Home() {
       setNotice(`${template.label} requiere un carbono interno unido por enlaces simples a otros dos carbonos.`);
       return;
     }
-    if (getValenceUsed(selectedAtom.id, molecule) + incomingValence > 4) {
-      setNotice(`No se puede añadir ${template.label.toLowerCase()}: el carbono superaría su tetravalencia.`);
+    const functionalGroupViolation = getAtomValenceViolation(
+      molecule,
+      selectedAtom.id,
+      incomingValence,
+    );
+    if (functionalGroupViolation) {
+      showValenceError(
+        `No se puede añadir ${template.label.toLowerCase()} en el ${titleCaseElement(functionalGroupViolation.element)} ${functionalGroupViolation.atomId}: alcanzaría ${functionalGroupViolation.attempted} enlaces y su máximo es ${functionalGroupViolation.limit}.`,
+      );
       return;
     }
 
@@ -3997,6 +4134,7 @@ export default function Home() {
       next,
       `${template.label} añadido (${template.shortFormula}). Fórmula, grupo principal y nombre recalculados.`,
     );
+    previousSelectedId.current = selectedAtom.id;
     setSelectedId(idMap[0]);
     setShowFunctionalPalette(false);
   };
@@ -4024,6 +4162,280 @@ export default function Home() {
     };
     commit(next, `${elementNames[getElement(selectedAtom)]} terminal retirado.`);
     setSelectedId(neighbor ?? next.atoms[0].id);
+  };
+
+  const selectCanvasAtom = (atomId: number) => {
+    const atom = getAtom(atomId, molecule);
+    if (!atom || atomId === selectedAtom.id) return;
+    previousSelectedId.current = selectedAtom.id;
+    setSelectedId(atomId);
+    setNotice(`${titleCaseElement(getElement(atom))} ${analysis.numberedAtoms.get(atomId) ?? atomId} seleccionado con el teclado.`);
+  };
+
+  const addKeyboardCarbon = (dx: number, dy: number) => {
+    const violation = getAtomValenceViolation(molecule, selectedAtom.id, 1);
+    if (violation) {
+      showValenceError(formatBondValenceError(1, violation));
+      return;
+    }
+
+    const targetX = selectedAtom.x + dx;
+    const targetY = selectedAtom.y + dy;
+    if (molecule.atoms.some((atom) =>
+      Math.abs(atom.x - targetX) < 0.05 && Math.abs(atom.y - targetY) < 0.05
+    )) {
+      setNotice("Ya existe un nodo en esa dirección; selecciónalo o utiliza otra flecha.");
+      return;
+    }
+
+    const nextId = Math.max(...molecule.atoms.map((atom) => atom.id)) + 1;
+    const next: Molecule = {
+      ...molecule,
+      atoms: [...molecule.atoms, { id: nextId, x: targetX, y: targetY, element: "C" }],
+      bonds: [...molecule.bonds, [selectedAtom.id, nextId, 1]],
+    };
+    const committed = commit(
+      next,
+      `Atajo de dibujo: Carbono ${nextId} añadido con enlace simple y seleccionado.`,
+    );
+    if (!committed) return;
+    previousSelectedId.current = selectedAtom.id;
+    setSelectedId(nextId);
+  };
+
+  const navigateCanvasHorizontally = (dx: -1 | 1) => {
+    const neighborId = findDirectionalNeighborId(molecule, selectedAtom.id, dx, 0);
+    if (neighborId !== null) {
+      selectCanvasAtom(neighborId);
+      return;
+    }
+    const neighbors = adjacency.get(selectedAtom.id) ?? [];
+    if (neighbors.length <= 1) {
+      addKeyboardCarbon(dx, 0);
+      return;
+    }
+    setNotice("No hay un vecino en esa dirección. Usa ↑ o ↓ para crear una ramificación desde este nodo.");
+  };
+
+  const createKeyboardBranch = (dy: -1 | 1) => {
+    const neighborAtoms = (adjacency.get(selectedAtom.id) ?? [])
+      .map((atomId) => getAtom(atomId, molecule))
+      .filter((atom): atom is CarbonAtom => Boolean(atom));
+    const hasLeftNeighbor = neighborAtoms.some((atom) => atom.x < selectedAtom.x - 0.05);
+    const hasRightNeighbor = neighborAtoms.some((atom) => atom.x > selectedAtom.x + 0.05);
+    if (!hasLeftNeighbor || !hasRightNeighbor) {
+      setNotice("Para crear una rama con ↑ o ↓, selecciona un nodo que tenga vecinos a izquierda y derecha.");
+      return;
+    }
+    addKeyboardCarbon(0, dy);
+  };
+
+  const replaceSelectedElement = (element: ChemicalElement) => {
+    const currentElement = getElement(selectedAtom);
+    if (currentElement === element) {
+      setNotice(`${titleCaseElement(element)} ${selectedAtom.id} ya tiene esa asignación.`);
+      return;
+    }
+    if (element !== "C" && ringContainingAtom(molecule, selectedAtom.id)) {
+      setNotice(COMPLEX_NAME_LIMIT_MESSAGE);
+      return;
+    }
+
+    const neighbors = atomNeighbors(selectedAtom.id, molecule);
+    if (element !== "C" && (neighbors.length !== 1 || neighbors[0].order !== 1)) {
+      const requestedGroup = element === "O"
+        ? "OH"
+        : element === "N"
+          ? "NH₂"
+          : element;
+      setNotice(`Para crear ${requestedGroup}, selecciona un nodo terminal unido mediante un enlace simple.`);
+      return;
+    }
+
+    const currentValence = getValenceUsed(selectedAtom.id, molecule);
+    const targetLimit = elementValences[element];
+    if (currentValence > targetLimit) {
+      showValenceError(
+        `No se puede convertir el nodo ${selectedAtom.id} en ${titleCaseElement(element)}: conservaría ${currentValence} enlaces y su máximo es ${targetLimit}.`,
+      );
+      return;
+    }
+
+    const next: Molecule = {
+      ...molecule,
+      atoms: molecule.atoms.map((atom) =>
+        atom.id === selectedAtom.id ? { ...atom, element } : { ...atom },
+      ),
+    };
+    const hydrogens = getImplicitHydrogens(selectedAtom.id, next);
+    const resultingLabel = element === "C"
+      ? hydrogens === 0 ? "C" : `CH${hydrogens > 1 ? toSubscript(hydrogens) : ""}`
+      : element === "O"
+        ? "OH"
+        : element === "N"
+          ? "NH₂"
+          : element;
+    commit(next, `Nodo ${selectedAtom.id} convertido en ${resultingLabel} mediante el atajo ${element === "Br" ? "B" : element}.`);
+  };
+
+  const getPreviousNeighborId = () => {
+    const neighborIds = adjacency.get(selectedAtom.id) ?? [];
+    if (
+      previousSelectedId.current !== null
+      && neighborIds.includes(previousSelectedId.current)
+    ) {
+      return previousSelectedId.current;
+    }
+
+    const currentNumber = analysis.numberedAtoms.get(selectedAtom.id);
+    if (currentNumber && currentNumber > 1) {
+      const numberedPrevious = neighborIds.find(
+        (atomId) => analysis.numberedAtoms.get(atomId) === currentNumber - 1,
+      );
+      if (numberedPrevious !== undefined) return numberedPrevious;
+    }
+
+    const leftNeighbor = findDirectionalNeighborId(molecule, selectedAtom.id, -1, 0);
+    if (leftNeighbor !== null) return leftNeighbor;
+    return neighborIds.length === 1 ? neighborIds[0] : null;
+  };
+
+  const setPreviousBondOrder = (nextOrder: BondOrder) => {
+    const previousId = getPreviousNeighborId();
+    if (previousId === null) {
+      setNotice("No hay un vecino anterior identificado. Muévete primero con ← o → y vuelve a pulsar 1, 2 o 3.");
+      return;
+    }
+
+    const bondIndex = molecule.bonds.findIndex(
+      ([a, b]) => (a === selectedAtom.id && b === previousId)
+        || (a === previousId && b === selectedAtom.id),
+    );
+    if (bondIndex < 0) return;
+    const currentOrder = getBondOrder(molecule.bonds[bondIndex]);
+    if (currentOrder === nextOrder) {
+      setNotice(`El enlace con el nodo anterior ya es ${getBondOrderLabel(nextOrder)}.`);
+      return;
+    }
+
+    const containingRing = molecule.rings?.find(
+      (ring) => ring.atomIds.includes(selectedAtom.id) && ring.atomIds.includes(previousId),
+    );
+    if (containingRing?.kind === "aromatic") {
+      setNotice("Los enlaces internos del benceno están fijados para conservar su aromaticidad.");
+      return;
+    }
+    if (molecule.rings?.length && !containingRing) {
+      setNotice("Los enlaces que unen un anillo con otra parte de la molécula se mantienen simples.");
+      return;
+    }
+
+    const violation = findBondValenceViolation(
+      molecule,
+      selectedAtom.id,
+      previousId,
+      nextOrder,
+      currentOrder,
+    );
+    if (violation) {
+      showValenceError(formatBondValenceError(nextOrder, violation));
+      return;
+    }
+
+    const nextBonds = molecule.bonds.map((bond, index) =>
+      index === bondIndex ? [bond[0], bond[1], nextOrder] as Bond : [...bond] as Bond,
+    );
+    commit(
+      { ...molecule, bonds: nextBonds },
+      `Atajo ${nextOrder}: enlace con el nodo anterior cambiado a ${getBondOrderLabel(nextOrder)}.`,
+    );
+  };
+
+  const removeSelectedWithKeyboard = () => {
+    if (ringContainingAtom(molecule, selectedAtom.id)) {
+      setNotice("El atajo X no elimina vértices de un anillo, porque alteraría su cierre y su aromaticidad.");
+      return;
+    }
+    const neighborIds = adjacency.get(selectedAtom.id) ?? [];
+    const carbonCount = molecule.atoms.filter(isCarbonAtom).length;
+    if (isCarbonAtom(selectedAtom) && carbonCount === 1) {
+      setNotice("La molécula debe conservar al menos un carbono.");
+      return;
+    }
+    if (neighborIds.length > 2) {
+      setNotice("No se puede reconectar de forma inequívoca un nodo con tres o más vecinos. Elimina primero una rama terminal.");
+      return;
+    }
+
+    const remainingAtoms = molecule.atoms.filter((atom) => atom.id !== selectedAtom.id);
+    const remainingBonds = molecule.bonds
+      .filter(([a, b]) => a !== selectedAtom.id && b !== selectedAtom.id)
+      .map((bond) => [...bond] as Bond);
+    const next: Molecule = { ...molecule, atoms: remainingAtoms, bonds: remainingBonds };
+
+    if (neighborIds.length === 2) {
+      const [a, b] = neighborIds;
+      const alreadyConnected = remainingBonds.some(
+        (bond) => (bond[0] === a && bond[1] === b) || (bond[0] === b && bond[1] === a),
+      );
+      if (!alreadyConnected) {
+        const violation = findBondValenceViolation(next, a, b, 1, 0);
+        if (violation) {
+          showValenceError(formatBondValenceError(1, violation));
+          return;
+        }
+        next.bonds = [...remainingBonds, [a, b, 1]];
+      }
+    }
+
+    const committed = commit(
+      next,
+      neighborIds.length === 2
+        ? `Nodo ${selectedAtom.id} eliminado con X; sus dos vecinos se reconectaron mediante un enlace simple.`
+        : `Nodo ${selectedAtom.id} eliminado con X.`,
+    );
+    if (!committed) return;
+    previousSelectedId.current = null;
+    setSelectedId(neighborIds[0] ?? remainingAtoms[0].id);
+  };
+
+  const handleCanvasKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement;
+    if (target.matches("input, textarea, select") || target.isContentEditable) return;
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+
+    const key = event.key.toLocaleLowerCase("es");
+    const supported = [
+      "arrowleft",
+      "arrowright",
+      "arrowup",
+      "arrowdown",
+      "c",
+      "o",
+      "n",
+      "b",
+      "f",
+      "x",
+      "1",
+      "2",
+      "3",
+    ];
+    if (!supported.includes(key) || !getAtom(selectedAtom.id, molecule)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.repeat && !key.startsWith("arrow")) return;
+
+    if (key === "arrowleft") navigateCanvasHorizontally(-1);
+    else if (key === "arrowright") navigateCanvasHorizontally(1);
+    else if (key === "arrowup") createKeyboardBranch(-1);
+    else if (key === "arrowdown") createKeyboardBranch(1);
+    else if (key === "c") replaceSelectedElement("C");
+    else if (key === "o") replaceSelectedElement("O");
+    else if (key === "n") replaceSelectedElement("N");
+    else if (key === "b") replaceSelectedElement("Br");
+    else if (key === "f") replaceSelectedElement("F");
+    else if (key === "x") removeSelectedWithKeyboard();
+    else setPreviousBondOrder(Number(key) as BondOrder);
   };
 
   const undo = () => {
@@ -4364,6 +4776,11 @@ export default function Home() {
         );
         return;
       }
+      const attachmentViolation = getAtomValenceViolation(molecule, selectedAtom.id, 1);
+      if (attachmentViolation) {
+        showValenceError(formatBondValenceError(1, attachmentViolation));
+        return;
+      }
       const attached = attachRingToMolecule(
         molecule,
         selectedAtom.id,
@@ -4379,10 +4796,12 @@ export default function Home() {
         return;
       }
       const ringCount = (attached.molecule.rings?.length ?? 0);
-      commit(
+      const committed = commit(
         attached.molecule,
         `${template.label} unido mediante un enlace simple. La estructura ahora contiene ${ringCount} anillos.`,
       );
+      if (!committed) return;
+      previousSelectedId.current = selectedAtom.id;
       setSelectedId(attached.attachmentId);
       setShowRingPalette(false);
       setShowAlkylPalette(false);
@@ -4478,7 +4897,7 @@ export default function Home() {
       : "Claro";
 
   return (
-    <main className="app-shell">
+    <main className="app-shell" onPointerDownCapture={dismissValenceAlert}>
       <header className="site-header">
         <div className="brand-mark" aria-hidden="true">
           <span>C</span>
@@ -4930,7 +5349,15 @@ export default function Home() {
             </form>
           )}
 
-          <div className={`molecule-stage ${viewMode === "skeletal" ? "skeletal-view" : "condensed-view"} ${highlightSubstituents ? "" : "uniform-colors"}`}>
+          <div
+            className={`molecule-stage ${viewMode === "skeletal" ? "skeletal-view" : "condensed-view"} ${highlightSubstituents ? "" : "uniform-colors"}`}
+            tabIndex={0}
+            role="group"
+            aria-label="Canvas molecular interactivo"
+            aria-describedby="canvas-keyboard-shortcuts"
+            onKeyDown={handleCanvasKeyDown}
+            onPointerDown={(event) => event.currentTarget.focus({ preventScroll: true })}
+          >
             <svg
               role="img"
               aria-label={`${viewMode === "skeletal" ? "Representación esquelética" : "Representación semidesarrollada"} ${showIupacName ? `de ${displayedIupacName}` : "de la molécula construida"}`}
@@ -5130,6 +5557,7 @@ export default function Home() {
                     className={`carbon-node ${carbonAtom ? "carbon-element" : `hetero-node element-${element.toLowerCase()}`} ${viewMode === "skeletal" && carbonAtom ? "skeletal-node" : "condensed-node"} ${isSelected ? "selected" : ""} ${mainChainSet.has(atom.id) ? "on-main-chain" : "on-branch"}`}
                     transform={`translate(${position.x} ${position.y})`}
                     onClick={() => {
+                      previousSelectedId.current = selectedAtom.id;
                       setSelectedId(atom.id);
                       setNotice(`${elementNames[element][0].toUpperCase()}${elementNames[element].slice(1)} ${chainNumber ?? "del grupo funcional"} seleccionado.`);
                     }}
@@ -5137,7 +5565,10 @@ export default function Home() {
                     tabIndex={0}
                     aria-label={`Seleccionar ${elementNames[element]} ${chainNumber ?? atom.id}`}
                     onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") setSelectedId(atom.id);
+                      if (event.key === "Enter" || event.key === " ") {
+                        previousSelectedId.current = selectedAtom.id;
+                        setSelectedId(atom.id);
+                      }
                     }}
                   >
                     {viewMode === "skeletal" && carbonAtom ? (
@@ -5221,6 +5652,22 @@ export default function Home() {
                 <span><i className="main-key" /> Estructura uniforme</span>
               )}
             </div>
+          </div>
+
+          {valenceAlert && (
+            <div className="valence-alert" role="alert" aria-live="assertive">
+              <span aria-hidden="true">!</span>
+              <p>{valenceAlert}</p>
+            </div>
+          )}
+
+          <div className="canvas-keyboard-shortcuts" id="canvas-keyboard-shortcuts">
+            <strong>Atajos del canvas</strong>
+            <span><kbd>←</kbd><kbd>→</kbd> mover/crear</span>
+            <span><kbd>↑</kbd><kbd>↓</kbd> rama</span>
+            <span><kbd>C</kbd><kbd>O</kbd><kbd>N</kbd><kbd>B</kbd><kbd>F</kbd> átomo</span>
+            <span><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> enlace</span>
+            <span><kbd>X</kbd> borrar</span>
           </div>
 
           <div className="builder-toolbar">

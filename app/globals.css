@@ -1177,10 +1177,92 @@ button {
   background: var(--canvas);
 }
 
+.molecule-stage:focus-visible {
+  outline: 3px solid rgba(55, 137, 116, 0.32);
+  outline-offset: 3px;
+  border-color: #77ad9f;
+}
+
 .molecule-stage svg {
   display: block;
   width: 100%;
   height: 100%;
+}
+
+.valence-alert {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 24px 0;
+  padding: 10px 13px;
+  border: 1px solid #efc6ba;
+  border-radius: 11px;
+  background: #fff5f1;
+  box-shadow: 0 7px 18px rgba(118, 52, 35, 0.08);
+  color: #873e2d;
+  font-size: 12px;
+  line-height: 1.4;
+  animation: valence-alert-in 180ms ease-out;
+}
+
+.valence-alert > span {
+  display: grid;
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 50%;
+  background: #e9a493;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.valence-alert p {
+  margin: 0;
+  font-weight: 750;
+}
+
+@keyframes valence-alert-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.canvas-keyboard-shortcuts {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 13px;
+  margin: 10px 24px 0;
+  color: #667b75;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.canvas-keyboard-shortcuts strong {
+  color: #345f55;
+  font-size: 10px;
+}
+
+.canvas-keyboard-shortcuts span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.canvas-keyboard-shortcuts kbd {
+  min-width: 20px;
+  padding: 2px 5px;
+  border: 1px solid #cad8d4;
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: #f8fbfa;
+  color: #315f54;
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1.25;
+  text-align: center;
 }
 
 .bond-touch-hint {
@@ -2884,6 +2966,16 @@ button:focus-visible,
   .molecule-stage {
     height: 380px;
     margin: 0 9px;
+  }
+
+  .valence-alert,
+  .canvas-keyboard-shortcuts {
+    margin-right: 12px;
+    margin-left: 12px;
+  }
+
+  .canvas-keyboard-shortcuts {
+    gap: 6px 9px;
   }
 
   .stage-legend {
@@ -4714,6 +4806,33 @@ html[data-theme="dark"] .functional-detection strong {
   border-color: #55435f;
   background: #302638;
   color: #c9afd5;
+}
+
+html[data-theme="dark"] .molecule-stage:focus-visible {
+  outline-color: rgba(112, 193, 170, 0.38);
+  border-color: #4c8c7b;
+}
+
+html[data-theme="dark"] .valence-alert {
+  border-color: #744b42;
+  background: #382723;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.16);
+  color: #efb4a5;
+}
+
+html[data-theme="dark"] .valence-alert > span {
+  background: #9f5f50;
+}
+
+html[data-theme="dark"] .canvas-keyboard-shortcuts,
+html[data-theme="dark"] .canvas-keyboard-shortcuts strong {
+  color: #9db7b0;
+}
+
+html[data-theme="dark"] .canvas-keyboard-shortcuts kbd {
+  border-color: #42564f;
+  background: #26332f;
+  color: #b9d2cb;
 }
 
 @media (max-width: 1120px) {
