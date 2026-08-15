@@ -44,7 +44,8 @@ test("keeps the outer cyclic stroke on the polygon edge and the second one insid
 
   assert.ok(Math.abs(projectedInset(edge, start, end)) < 1e-9);
   assert.ok(projectedInset(inner, start, end) > projectedInset(edge, start, end));
-  assert.ok(projectedInset(inner, start, end) <= 8.5 + 1e-9);
+  assert.ok(projectedInset(inner, start, end) >= 4.55 - 1e-9);
+  assert.ok(projectedInset(inner, start, end) <= 5.95 + 1e-9);
   assert.deepEqual(
     { x: edge.x, y: edge.y, x2: edge.x2, y2: edge.y2 },
     { x: start.x, y: start.y, x2: end.x, y2: end.y },

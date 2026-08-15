@@ -251,9 +251,9 @@ export function getSkeletalRingDoubleBondSegments(
   }
 
   // La línea exterior coincide con el lado geométrico del polígono. La línea
-  // interior queda a una distancia compacta (6,5–8,5 px entre ejes), suficiente
-  // para distinguir el doble enlace sin ensancharlo visualmente.
-  const innerInset = clamp(length * 0.055, 6.5, 8.5);
+  // interior queda aproximadamente un 30 % más cerca (4,55–5,95 px entre
+  // ejes), manteniendo legible el doble enlace con proporción de libro.
+  const innerInset = clamp(length * 0.0385, 4.55, 5.95);
   const endpointTrim = clamp(length * 0.09, 10, 18);
 
   return [
