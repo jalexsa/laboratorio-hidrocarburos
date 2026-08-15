@@ -8,6 +8,8 @@ const commonSpanishNames: Record<string, string> = {
   benceno: "benzene",
   formaldehido: "methanal",
   fenol: "phenol",
+  tetrahidropiran: "tetrahydropyran",
+  tetrahidropirano: "tetrahydropyran",
   tolueno: "toluene",
 };
 
@@ -21,7 +23,7 @@ function normalizePunctuation(value: string) {
     .replace(/\s*-\s*/g, "-")
     .toLocaleLowerCase("es");
 
-  return normalized.replace(/\(([^()]*)\)/g, (_match, content: string) => {
+  const withStereochemicalLocants = normalized.replace(/\(([^()]*)\)/g, (_match, content: string) => {
     const stereochemical = content.replace(
       /(^|,)(\d*)([ersz])(?=,|$)/g,
       (_descriptor, separator: string, locant: string, letter: string) =>
@@ -29,6 +31,11 @@ function normalizePunctuation(value: string) {
     );
     return `(${stereochemical})`;
   });
+
+  // N- y N,N- son localizadores de heteroátomo, no la letra inicial de una
+  // palabra. OPSIN los distingue de la n minúscula, por lo que se restauran
+  // después de normalizar el resto del nombre.
+  return withStereochemicalLocants.replace(/(^|[-,(])n(?=[,-])/g, "$1N");
 }
 
 function translateCore(value: string) {
@@ -43,7 +50,13 @@ function translateCore(value: string) {
     .replace(/fenil/g, "phenyl")
     .replace(/cloro/g, "chloro")
     .replace(/yodo/g, "iodo")
+    .replace(
+      /ciclo(prop|but|pent|hex|hept|oct|non|dec)il/g,
+      (_match, root: string) => `cyclo${root}yl`,
+    )
     .replace(/ciclo/g, "cyclo")
+    .replace(/tetrahidro/g, "tetrahydro")
+    .replace(/pirano/g, "pyran")
     .replace(/isopropil/g, "propan-2-yl")
     .replace(/isobutil/g, "2-methylpropyl")
     .replace(/terc-butil|tert-butil/g, "tert-butyl")

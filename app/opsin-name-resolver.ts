@@ -28,6 +28,8 @@ export type NameStructureResolutionResult =
 
 const embeddedSmilesFallback: Record<string, string> = {
   "(2E)-2-ethyl-3-methylhex-2-enal": "C(C)/C(/C=O)=C(\\CCC)/C",
+  "N-(2-cyclohexylethyl)-4-methyl-3-oxohexanamide": "C1(CCCCC1)CCNC(CC(C(CC)C)=O)=O",
+  "N-cyclohexyl-N-methylpropan-2-amine": "C1(CCCCC1)N(C(C)C)C",
   "2-methylpropanoic acid": "CC(C)C(=O)O",
   "3-(2-oxopropyl)cyclohexanone": "O=C(CC1CC(CCC1)=O)C",
   "benzene-1,3,5-triol": "Oc1cc(O)cc(O)c1",
@@ -43,6 +45,7 @@ const embeddedSmilesFallback: Record<string, string> = {
   "phenol": "Oc1ccccc1",
   "propan-2-ol": "CC(O)C",
   "propan-2-one": "CC(=O)C",
+  tetrahydropyran: "O1CCCCC1",
 };
 
 function embeddedFallback(candidate: string, originalName: string): NameStructureResolution | null {

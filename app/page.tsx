@@ -2568,6 +2568,35 @@ export function buildIupacReasoningSteps(
   enabledAliases: readonly string[] = [],
   sourceName?: string | null,
 ): IupacReasoningStep[] {
+  if (sourceName && usesNitrogenLocants(sourceName)) {
+    const normalizedSource = sourceName
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLocaleLowerCase("es");
+    const principalGroup = /(?:amida|amide)/.test(normalizedSource) ? "amida" : "amina";
+    const nestedExplanation = sourceName.includes("(")
+      ? " Los paréntesis mantienen unido el sustituyente complejo para que se interprete como una sola rama."
+      : "";
+
+    return [
+      {
+        number: "01",
+        title: "Grupo funcional principal",
+        explanation: `OPSIN identifica la ${principalGroup} y conserva el nitrógeno como centro funcional del nombre.`,
+      },
+      {
+        number: "02",
+        title: "Cadena principal o anillo",
+        explanation: "El motor interpreta simultáneamente la cadena principal, los ciclos y las ramas, sin convertir automáticamente un grupo unido al nitrógeno en parte de la cadena principal.",
+      },
+      {
+        number: "04",
+        title: "Sustituyentes y localizadores",
+        explanation: `El localizador N- indica que el sustituyente está enlazado directamente al nitrógeno y no a un carbono numerado.${nestedExplanation}`,
+      },
+    ];
+  }
+
   const steps: IupacReasoningStep[] = [];
   const isRingStructure = analysis.family !== "acyclic";
   const chainLength = analysis.mainChain.length;
@@ -2935,6 +2964,18 @@ async function resolveNameStructure(name: string): Promise<NameStructureResoluti
   throw new Error(directResult.error);
 }
 
+const COMPLEX_NAME_LIMIT_MESSAGE = "El motor no puede interpretar heterociclos o aminas complejas en este momento.";
+
+function usesNitrogenLocants(value: string) {
+  const normalized = value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, "")
+    .toLocaleLowerCase("es");
+  return /(?:amina|amine|amida|amide)/.test(normalized)
+    && /(^|[-,(])n(?=[,-])/.test(normalized);
+}
+
 function readLocalLibrary(): LocalLibraryState {
   try {
     const stored = window.localStorage.getItem(localLibraryStorageKey);
@@ -3206,13 +3247,16 @@ export default function Home() {
   const [nameBuilderBusy, setNameBuilderBusy] = useState(false);
   const [nameBuilderFeedback, setNameBuilderFeedback] = useState<NameBuilderFeedback | null>(null);
   const [reasoningSourceName, setReasoningSourceName] = useState<string | null>(null);
+  const [sourceNameOverride, setSourceNameOverride] = useState<string | null>(null);
   const lastPersistedSignature = useRef("");
 
   const adjacency = useMemo(() => buildAdjacency(molecule), [molecule]);
-  const analysis = useMemo(
-    () => analyzeMolecule(molecule, commonAlkylNameSelections),
-    [molecule, commonAlkylNameSelections],
-  );
+  const analysis = useMemo(() => {
+    const calculated = analyzeMolecule(molecule, commonAlkylNameSelections);
+    return sourceNameOverride ? { ...calculated, name: sourceNameOverride } : calculated;
+  }, [molecule, commonAlkylNameSelections, sourceNameOverride]);
+  const automaticNumberingAvailable = sourceNameOverride === null;
+  const effectiveShowNumbering = showNumbering && automaticNumberingAvailable;
   const selectedAtom = molecule.atoms.find((atom) => atom.id === selectedId) ?? molecule.atoms[0];
   const mainChainSet = useMemo(() => new Set(analysis.mainChain), [analysis.mainChain]);
   const ringUnsaturationNameOption = useMemo(
@@ -3327,6 +3371,8 @@ export default function Home() {
             viewMode: data.draft.viewMode,
           });
           setMolecule(restored);
+          setSourceNameOverride(usesNitrogenLocants(data.draft.name) ? data.draft.name : null);
+          setReasoningSourceName(usesNitrogenLocants(data.draft.name) ? data.draft.name : null);
           setSelectedId(restored.atoms[0].id);
           setViewMode(data.draft.viewMode);
           setNotice(`Continuamos donde quedaste: ${data.draft.name}.`);
@@ -3379,6 +3425,8 @@ export default function Home() {
             viewMode: data.draft.viewMode,
           });
           setMolecule(restored);
+          setSourceNameOverride(usesNitrogenLocants(data.draft.name) ? data.draft.name : null);
+          setReasoningSourceName(usesNitrogenLocants(data.draft.name) ? data.draft.name : null);
           setSelectedId(restored.atoms[0].id);
           setViewMode(data.draft.viewMode);
           setNotice(`Continuamos donde quedaste: ${data.draft.name}.`);
@@ -3534,6 +3582,7 @@ export default function Home() {
     setFuture([]);
     setMolecule(next);
     setReasoningSourceName(null);
+    setSourceNameOverride(null);
     setNotice(message);
   };
 
@@ -3545,6 +3594,7 @@ export default function Home() {
       setNameBuilderFeedback({ kind: "error", message: "Escribe un nombre IUPAC para crear la estructura." });
       return;
     }
+    const preserveSourceName = usesNitrogenLocants(submittedName);
 
     setNameBuilderBusy(true);
     setNameBuilderFeedback(null);
@@ -3584,6 +3634,7 @@ export default function Home() {
       }
 
       const generatedAnalysis = analyzeMolecule(next, enabledAliases);
+      const resultName = preserveSourceName ? submittedName : generatedAnalysis.name;
       const commonName = generatedAnalysis.commonName
         ? `; también se conoce como ${generatedAnalysis.commonName}`
         : "";
@@ -3594,6 +3645,7 @@ export default function Home() {
         `Estructura creada desde «${submittedName}». Puedes seguir editándola átomo por átomo.`,
       );
       setReasoningSourceName(submittedName);
+      setSourceNameOverride(preserveSourceName ? submittedName : null);
       setSelectedId(next.atoms[0].id);
       setCommonAlkylNameSelections(enabledAliases);
       setUseSimplifiedRingUnsaturationName(omittedRingLocant);
@@ -3604,15 +3656,17 @@ export default function Home() {
       setShowFunctionalPalette(false);
       setNameBuilderFeedback({
         kind: "success",
-        message: `Lista con ${engineLabel}: ${generatedAnalysis.name}${commonName}.${serviceWarning} Ya quedó añadida a tu historial automático.`,
+        message: `Lista con ${engineLabel}: ${resultName}${commonName}.${serviceWarning} Ya quedó añadida a tu historial automático.`,
       });
     } catch (error) {
       setNameBuilderOpen(true);
       setNameBuilderFeedback({
         kind: "error",
-        message: error instanceof Error
-          ? error.message
-          : "No pude interpretar ese nombre IUPAC.",
+        message: preserveSourceName
+          ? COMPLEX_NAME_LIMIT_MESSAGE
+          : error instanceof Error
+            ? error.message
+            : "No pude interpretar ese nombre IUPAC.",
       });
     } finally {
       setNameBuilderBusy(false);
@@ -3979,6 +4033,7 @@ export default function Home() {
     setUndoStack((items) => items.slice(0, -1));
     setMolecule(cloneMolecule(previous));
     setReasoningSourceName(null);
+    setSourceNameOverride(null);
     setSelectedId(previous.atoms[0].id);
     setNotice("Último cambio deshecho.");
   };
@@ -3990,6 +4045,7 @@ export default function Home() {
     setFuture((items) => items.slice(1));
     setMolecule(cloneMolecule(next));
     setReasoningSourceName(null);
+    setSourceNameOverride(null);
     setSelectedId(next.atoms[0].id);
     setNotice("Cambio rehecho.");
   };
@@ -4056,6 +4112,10 @@ export default function Home() {
       restored,
       `Estructura recuperada de ${source === "saved" ? "Guardados" : "tu historial"}: ${entry.name}.`,
     );
+    if (usesNitrogenLocants(entry.name)) {
+      setSourceNameOverride(entry.name);
+      setReasoningSourceName(entry.name);
+    }
     setSelectedId(restored.atoms[0].id);
     setViewMode(entry.viewMode);
     setShowAlkylPalette(false);
@@ -4925,7 +4985,7 @@ export default function Home() {
                   role: null,
                 }));
                 const bondClipOptions = {
-                  startObstacle: showNumbering
+                  startObstacle: effectiveShowNumbering
                     && carbonCount > 1
                     && isCarbonAtom(atomA)
                     && analysis.numberedAtoms.has(a)
@@ -4937,7 +4997,7 @@ export default function Home() {
                         radius: SKELETAL_NUMBER_BADGE_CLEARANCE,
                       }
                     : undefined,
-                  endObstacle: showNumbering
+                  endObstacle: effectiveShowNumbering
                     && carbonCount > 1
                     && isCarbonAtom(atomB)
                     && analysis.numberedAtoms.has(b)
@@ -5094,7 +5154,7 @@ export default function Home() {
                             </text>
                           </g>
                         )}
-                        {showNumbering && chainNumber && carbonCount > 1 && (
+                        {effectiveShowNumbering && chainNumber && carbonCount > 1 && (
                           <g
                             className="skeletal-number"
                             transform={`translate(${numberBadgeOffset.x} ${numberBadgeOffset.y})`}
@@ -5116,7 +5176,7 @@ export default function Home() {
                             </tspan>
                           )}
                         </text>
-                        {showNumbering && chainNumber && (
+                        {effectiveShowNumbering && chainNumber && (
                           <g transform="translate(25 -27)">
                             <circle className="number-circle" r="12" />
                             <text className="number-label" textAnchor="middle" dominantBaseline="central">{chainNumber}</text>
@@ -5471,9 +5531,21 @@ export default function Home() {
               <input type="checkbox" checked={showHydrogens} disabled={viewMode === "skeletal"} onChange={(event) => setShowHydrogens(event.target.checked)} />
               <span /> Mostrar H implícitos
             </label>
-            <label>
-              <input type="checkbox" checked={showNumbering} onChange={(event) => setShowNumbering(event.target.checked)} />
-              <span /> Numerar {isRingStructure ? "anillo" : "cadena principal"}
+            <label
+              className={!automaticNumberingAvailable ? "option-disabled" : ""}
+              title={!automaticNumberingAvailable
+                ? "La numeración automática se oculta para no atribuir localizadores de carbono a sustituyentes N-."
+                : undefined}
+            >
+              <input
+                type="checkbox"
+                checked={effectiveShowNumbering}
+                disabled={!automaticNumberingAvailable}
+                onChange={(event) => setShowNumbering(event.target.checked)}
+              />
+              <span /> {automaticNumberingAvailable
+                ? `Numerar ${isRingStructure ? "anillo" : "cadena principal"}`
+                : "Numeración N- conservada en el nombre"}
             </label>
             <label>
               <input

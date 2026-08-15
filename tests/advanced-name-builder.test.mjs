@@ -30,6 +30,18 @@ test("translates Spanish functional-group names into OPSIN candidates", () => {
     translateSpanishIupacToOpsin("3-(2-oxopropil)ciclohexanona"),
     "3-(2-oxopropyl)cyclohexanone",
   );
+  assert.equal(
+    translateSpanishIupacToOpsin("N-ciclohexil-N-metilpropan-2-amina"),
+    "N-cyclohexyl-N-methylpropan-2-amine",
+  );
+  assert.equal(
+    translateSpanishIupacToOpsin("N-(2-ciclohexiletil)-4-metil-3-oxohexanamida"),
+    "N-(2-cyclohexylethyl)-4-methyl-3-oxohexanamide",
+  );
+  assert.equal(
+    translateSpanishIupacToOpsin("tetrahidropirano"),
+    "tetrahydropyran",
+  );
 });
 
 test("keeps both translated and original OPSIN candidates", () => {
@@ -66,6 +78,25 @@ test("the reported complex names become editable OpenChemLib molecules", () => {
   assert.equal(cyclicDiketone.ok, true, cyclicDiketone.ok ? undefined : cyclicDiketone.error);
   assert.equal(cyclicDiketone.molecule.rings?.[0].atomIds.length, 6);
   assert.equal(cyclicDiketone.molecule.atoms.filter((atom) => atom.element === "O").length, 2);
+
+  const tertiaryAmine = moleculeFromSmiles("C1(CCCCC1)N(C(C)C)C");
+  assert.equal(tertiaryAmine.ok, true, tertiaryAmine.ok ? undefined : tertiaryAmine.error);
+  assert.equal(tertiaryAmine.molecule.atoms.filter((atom) => atom.element === "N").length, 1);
+  assert.equal(tertiaryAmine.molecule.rings?.[0].atomIds.length, 6);
+
+  const nestedAmide = moleculeFromSmiles("C1(CCCCC1)CCNC(CC(C(CC)C)=O)=O");
+  assert.equal(nestedAmide.ok, true, nestedAmide.ok ? undefined : nestedAmide.error);
+  assert.equal(nestedAmide.molecule.atoms.filter((atom) => atom.element === "N").length, 1);
+  assert.equal(nestedAmide.molecule.atoms.filter((atom) => atom.element === "O").length, 2);
+});
+
+test("heterocycles receive the friendly canvas limitation message", () => {
+  const heterocycle = moleculeFromSmiles("O1CCCCC1");
+  assert.equal(heterocycle.ok, false);
+  assert.equal(
+    heterocycle.error,
+    "El motor no puede interpretar heterociclos o aminas complejas en este momento.",
+  );
 });
 
 test("the browser resolver uses OPSIN directly and preserves stereodescriptors", async () => {
@@ -95,4 +126,22 @@ test("known classroom names still resolve when the network is unavailable", asyn
   assert.equal(result.ok, true);
   assert.equal(result.value.source, "integrated-fallback");
   assert.equal(result.value.smiles, "O=C(CC1CC(CCC1)=O)C");
+});
+
+test("complex N-substituted names retain an integrated fallback", async () => {
+  const names = [
+    ["N-ciclohexil-N-metilpropan-2-amina", "C1(CCCCC1)N(C(C)C)C"],
+    ["N-(2-ciclohexiletil)-4-metil-3-oxohexanamida", "C1(CCCCC1)CCNC(CC(C(CC)C)=O)=O"],
+  ];
+
+  for (const [name, smiles] of names) {
+    const result = await resolveNameWithOpsin(name, {
+      fetchImpl: async () => {
+        throw new TypeError("Failed to fetch");
+      },
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.value.source, "integrated-fallback");
+    assert.equal(result.value.smiles, smiles);
+  }
 });

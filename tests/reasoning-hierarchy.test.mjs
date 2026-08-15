@@ -148,3 +148,21 @@ test("explains why an internal ketone is C4 in a hidden nine-carbon chain", () =
   assert.match(numberingStep.explanation, /C4.*C6/i);
   assert.match(numberingStep.explanation, /no pueden invertir esta decisión/i);
 });
+
+test("explains N-locants and nested substituents without inventing a carbon locant", () => {
+  const converted = moleculeFromSmiles("C1(CCCCC1)CCNC(CC(C(CC)C)=O)=O");
+  assert.equal(converted.ok, true, converted.ok ? undefined : converted.error);
+  const analysis = analyzeMolecule(converted.molecule);
+  const steps = buildIupacReasoningSteps(
+    converted.molecule,
+    analysis,
+    [],
+    "N-(2-ciclohexiletil)-4-metil-3-oxohexanamida",
+  );
+
+  assert.deepEqual(steps.map((step) => step.number), ["01", "02", "04"]);
+  assert.match(steps[0].explanation, /amida/i);
+  assert.match(steps[2].explanation, /directamente al nitrógeno/i);
+  assert.match(steps[2].explanation, /paréntesis/i);
+  assert.doesNotMatch(steps[2].explanation, /C\d/);
+});

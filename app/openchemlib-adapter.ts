@@ -137,7 +137,7 @@ export function moleculeFromSmiles(smiles: string): OpenChemLibBuildResult {
     if (ringAtomIds.some((id) => atoms[id - 1].element !== "C")) {
       return {
         ok: false,
-        error: "OpenChemLib reconoció un heterociclo. El análisis IUPAC del laboratorio todavía requiere anillos formados por carbono.",
+        error: "El motor no puede interpretar heterociclos o aminas complejas en este momento.",
       };
     }
     rings.push({
@@ -168,4 +168,3 @@ export function moleculeFromSmiles(smiles: string): OpenChemLibBuildResult {
     },
   };
 }
-
