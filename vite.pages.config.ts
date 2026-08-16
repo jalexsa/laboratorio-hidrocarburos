@@ -14,5 +14,12 @@ export default defineConfig({
     outDir: outputDirectory,
     emptyOutDir: true,
     target: "es2020",
+    rollupOptions: {
+      input: {
+        root: fileURLToPath(new URL("./pages-src/index.html", import.meta.url)),
+        es: fileURLToPath(new URL("./pages-src/es/index.html", import.meta.url)),
+        en: fileURLToPath(new URL("./pages-src/en/index.html", import.meta.url)),
+      },
+    },
   },
 });

@@ -6,11 +6,15 @@ const commonSpanishNames: Record<string, string> = {
   "acido formico": "formic acid",
   anilina: "aniline",
   benceno: "benzene",
+  bifenilo: "biphenyl",
   formaldehido: "methanal",
   fenol: "phenol",
   tetrahidropiran: "tetrahydropyran",
   tetrahidropirano: "tetrahydropyran",
   tolueno: "toluene",
+  "o-xileno": "o-xylene",
+  "m-xileno": "m-xylene",
+  "p-xileno": "p-xylene",
 };
 
 function normalizePunctuation(value: string) {
@@ -45,7 +49,10 @@ function translateCore(value: string) {
     .replace(/propoxi/g, "propoxy")
     .replace(/butoxi/g, "butoxy")
     .replace(/hidroxi/g, "hydroxy")
+    .replace(/amino/g, "__amino_prefix__")
+    .replace(/carbamoil/g, "carbamoyl")
     .replace(/benceno/g, "benzene")
+    .replace(/fenol/g, "phenol")
     .replace(/fenoxi/g, "phenoxy")
     .replace(/fenil/g, "phenyl")
     .replace(/cloro/g, "chloro")
@@ -73,6 +80,13 @@ function translateCore(value: string) {
     .replace(/\bet(?=an|en|in)/g, "eth");
 
   translated = translated
+    .replace(/anodial$/g, "anedial")
+    .replace(/anodiamida$/g, "anediamide")
+    .replace(/anodiamina$/g, "anediamine")
+    .replace(/anodioato$/g, "anedioate")
+    .replace(/anodioico$/g, "anedioic")
+    .replace(/carboxilato$/g, "carboxylate")
+    .replace(/benzoico$/g, "benzoic")
     .replace(/carbaldehido$/g, "carbaldehyde")
     .replace(/carboxilico$/g, "carboxylic acid")
     .replace(/nitrilo$/g, "nitrile")
@@ -92,7 +106,9 @@ function translateCore(value: string) {
     .replace(/ano$/g, "ane")
     .replace(/eno$/g, "ene")
     .replace(/ino$/g, "yne")
-    .replace(/ilo$/g, "yl");
+    .replace(/-il$/g, "-yl")
+    .replace(/ilo$/g, "yl")
+    .replace(/__amino_prefix__/g, "amino");
 
   return translated;
 }
@@ -109,7 +125,7 @@ export function translateSpanishIupacToOpsin(value: string) {
   const common = commonSpanishNames[normalized];
   if (common) return common;
 
-  const ester = normalized.match(/^(.+?oato)\s+de\s+(.+?(?:ilo|il))$/);
+  const ester = normalized.match(/^(.+?(?:oato|carboxilato))\s+de\s+(.+?(?:ilo|il))$/);
   if (ester) {
     const acidPart = translateCore(ester[1]);
     const alkylPart = translateCore(ester[2]);

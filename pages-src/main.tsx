@@ -6,7 +6,7 @@ import Home from "../app/page";
 const root = document.getElementById("root");
 
 if (!root) {
-  throw new Error("No se encontró el contenedor principal de la aplicación.");
+  throw new Error("Application root container was not found.");
 }
 
 createRoot(root).render(

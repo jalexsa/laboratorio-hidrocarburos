@@ -13,9 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Constructor de química orgánica",
+  title: "Laboratorio de Hidrocarburos | Sciu Science",
   description:
-    "Simulación didáctica para construir hidrocarburos y compuestos con grupos funcionales, validar valencias y analizar su nomenclatura IUPAC.",
+    "Laboratorio interactivo bilingüe para construir hidrocarburos y compuestos con grupos funcionales, validar valencias y explorar nomenclatura IUPAC.",
   other: {
     "codex-preview": "development",
   },
@@ -31,7 +31,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="es">
+    <html lang="es" suppressHydrationWarning>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >

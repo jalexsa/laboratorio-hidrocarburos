@@ -1,0 +1,437 @@
+export type AppLanguage = "es" | "en";
+
+export const LANGUAGE_STORAGE_KEY = "hydrocarbon-lab-language";
+
+const ENGLISH_UI: Record<string, string> = {
+  "Laboratorio interactivo": "Interactive lab",
+  "Laboratorio de Hidrocarburos": "Hydrocarbon Lab",
+  "Constructor de química orgánica": "Organic Chemistry Builder",
+  "Historial": "History",
+  "Guardando…": "Saving…",
+  "Siempre disponible": "Always available",
+  "Guardados": "Saved",
+  "Elegidos por ti": "Selected by you",
+  "Tema": "Theme",
+  "Hidrocarburos · grupos funcionales": "Hydrocarbons · functional groups",
+  "Cerrar historial": "Close history",
+  "Biblioteca personal": "Personal library",
+  "Mi laboratorio químico": "My chemistry lab",
+  "Secciones de mi laboratorio": "My laboratory sections",
+  "Automático": "Automatic",
+  "Exportar o borrar el historial químico": "Export or clear chemistry history",
+  "Descargar el historial en un único documento": "Download history as a single document",
+  "El historial todavía no contiene estructuras": "History does not contain any structures yet",
+  "Exportar historial": "Export history",
+  "Borrar únicamente el historial; Guardados se conservará": "Clear history only; Saved structures will be preserved",
+  "El historial ya está vacío": "History is already empty",
+  "Borrar todo mi historial sin eliminar Guardados": "Clear all history without deleting Saved structures",
+  "Borrando…": "Clearing…",
+  "Borrar historial": "Clear history",
+  "Importar y exportar estructuras guardadas": "Import and export saved structures",
+  "Importando…": "Importing…",
+  "Importar .quimica": "Import .quimica",
+  "Importar documento químico a Guardados": "Import chemistry document into Saved",
+  "Descargar todas las estructuras guardadas en un único documento": "Download all saved structures as a single document",
+  "Añade una estructura a Guardados antes de exportar": "Add a structure to Saved before exporting",
+  "Exportar guardados": "Export saved",
+  "Cerrar aviso de archivo": "Close file notice",
+  "Estructura actual": "Current structure",
+  "Añadir a Guardados": "Add to Saved",
+  "El historial se recupera cuando vuelves con la misma cuenta.": "Your history is restored when you return with the same account.",
+  "El historial se recupera cuando vuelves desde este navegador.": "Your history is restored when you return from this browser.",
+  "Limpiar búsqueda": "Clear search",
+  "Versiones recientes": "Recent versions",
+  "Estructuras guardadas": "Saved structures",
+  "Se guarda una versión única después de cada pausa.": "A unique version is saved after each pause.",
+  "Esta sección solo contiene lo que decides conservar.": "This section only contains what you choose to keep.",
+  "Cargando tus estructuras…": "Loading your structures…",
+  "Tu historial comienza aquí": "Your history starts here",
+  "Todavía no tienes estructuras guardadas": "You do not have any saved structures yet",
+  "Prueba con el nombre IUPAC, la fórmula o la familia del compuesto.": "Try the IUPAC name, molecular formula, or compound family.",
+  "Construye una molécula y aparecerán aquí sus versiones recientes.": "Build a molecule and its recent versions will appear here.",
+  "Añade la estructura actual o importa un archivo .quimica para conservarlo aparte del historial.": "Add the current structure or import a .quimica file to keep it separately from history.",
+  "Selecciona": "Select",
+  "un carbono": "a carbon",
+  "Añade": "Add",
+  "C, enlaces y grupos funcionales": "C, bonds, and functional groups",
+  "Analiza": "Analyze",
+  "el nombre IUPAC": "the IUPAC name",
+  "Estructura molecular": "Molecular structure",
+  "Construye la estructura orgánica": "Build the organic structure",
+  "Semides.": "Condensed",
+  "Esquelética": "Skeletal",
+  "Deshacer": "Undo",
+  "Rehacer": "Redo",
+  "Nueva": "New",
+  "Construir por nombre IUPAC": "Build from IUPAC name",
+  "Por nombre": "By name",
+  "Instrucciones breves": "Quick instructions",
+  "Canvas molecular interactivo": "Interactive molecular canvas",
+  "OPSIN interpreta el nombre y OpenChemLib crea el objeto molecular que se dibuja en el canvas.": "OPSIN interprets the name and OpenChemLib creates the molecular object drawn on the canvas.",
+  "Motor químico avanzado": "Advanced chemistry engine",
+  "Nombre del compuesto": "Compound name",
+  "Prueba:": "Try:",
+  "Admite grupos funcionales, sustituyentes entre paréntesis y descriptores estereoquímicos E/Z.": "Supports functional groups, parenthesized substituents, and E/Z stereochemical descriptors.",
+  "Toca un enlace": "Tap a bond",
+  "orden de enlace · E ↔ Z en C=C": "bond order · E ↔ Z on C=C",
+  "Anillo principal": "Parent ring",
+  "Cadena principal": "Parent chain",
+  "Sustituyente": "Substituent",
+  "Estructura uniforme": "Uniform structure",
+  "Atajos del canvas": "Canvas shortcuts",
+  "mover/crear": "move/create",
+  "rama": "branch",
+  "átomo": "atom",
+  "enlace": "bond",
+  "borrar": "delete",
+  "Próximo enlace": "Next bond",
+  "Añadir C": "Add C",
+  "Añadir al carbono seleccionado": "Add to selected carbon",
+  "Elige un grupo completo; se colocará automáticamente en un espacio libre.": "Choose a complete group; it will be placed automatically in an available space.",
+  "Cerrar grupos alquilo": "Close alkyl groups",
+  "Biblioteca de anillos": "Ring library",
+  "Cerrar biblioteca de anillos": "Close ring library",
+  "Cicloalcanos": "Cycloalkanes",
+  "CₙH₂ₙ · enlaces simples": "CₙH₂ₙ · single bonds",
+  "Aromáticos monocíclicos": "Monocyclic aromatics",
+  "Benceno y derivados alquilados": "Benzene and alkyl derivatives",
+  "Biblioteca de grupos funcionales": "Functional group library",
+  "Selecciona primero el carbono que llevará el grupo. La valencia y el nombre se validan automáticamente.": "First select the carbon that will carry the group. Valence and the name are validated automatically.",
+  "Cerrar grupos funcionales": "Close functional groups",
+  "La prioridad importa:": "Priority matters:",
+  "el grupo principal define el sufijo y recibe el localizador más bajo.": "the principal group defines the suffix and receives the lowest locant.",
+  "Grupos con oxígeno": "Oxygen-containing groups",
+  "Alcoholes, carbonilos, ácidos y derivados": "Alcohols, carbonyls, acids, and derivatives",
+  "Grupos con nitrógeno": "Nitrogen-containing groups",
+  "Aminas y amidas": "Amines and amides",
+  "Análisis en tiempo real": "Real-time analysis",
+  "Nombre IUPAC sugerido": "Suggested IUPAC name",
+  "Estructura válida": "Valid structure",
+  "Respuesta oculta": "Answer hidden",
+  "Nombre tradicional:": "Common name:",
+  "Detectados": "Detected",
+  "Fórmula molecular": "Molecular formula",
+  "Carbonos totales": "Total carbons",
+  "Grupo principal": "Principal group",
+  "Cómo se obtiene": "How it is derived",
+  "Prioridades que aplican": "Applied priorities",
+  "Modo examen": "Exam mode",
+  "Ocultar ayuda": "Hide help",
+  "Mostrar ayuda": "Show help",
+  "Explora estructuras conocidas": "Explore known structures",
+  "Ejemplos rápidos": "Quick examples",
+  "Alcance actual:": "Current scope:",
+  "hidrocarburos y nueve familias funcionales con O, N y halógenos.": "hydrocarbons and nine functional-group families containing O, N, and halogens.",
+  "Los hidrógenos se completan automáticamente respetando las valencias de C, O, N y halógenos.": "Hydrogens are completed automatically while respecting the valences of C, O, N, and halogens.",
+  "Descubrir crédito del autor": "Reveal author credit",
+  "Hay algo escondido aquí": "There is something hidden here",
+  "Una experiencia creada por": "An experience created by",
+  "Profe Alex Sáez": "Prof. Alex Sáez",
+  "Química que se construye.": "Chemistry you can build.",
+  "Hidrocarburo": "Hydrocarbon",
+  "Aromático": "Aromatic",
+  "Cíclico": "Cyclic",
+  "Policíclico": "Polycyclic",
+  "Insaturado": "Unsaturated",
+  "Alcano": "Alkane",
+  "Cicloalcano": "Cycloalkane",
+  "Cicloalqueno": "Cycloalkene",
+  "Cicloalquino": "Cycloalkyne",
+  "Cicloalquenino": "Cycloalken-yne",
+  "Oscuro": "Dark",
+  "Claro": "Light",
+  "oscuro": "dark",
+  "claro": "light",
+  "simple": "single",
+  "doble": "double",
+  "triple": "triple",
+  "carbono": "carbon",
+  "oxígeno": "oxygen",
+  "nitrógeno": "nitrogen",
+  "flúor": "fluorine",
+  "cloro": "chlorine",
+  "bromo": "bromine",
+  "yodo": "iodine",
+  "Carbono": "Carbon",
+  "Oxígeno": "Oxygen",
+  "Nitrógeno": "Nitrogen",
+  "Flúor": "Fluorine",
+  "Halogenuro": "Halide",
+  "Alcohol": "Alcohol",
+  "Éter": "Ether",
+  "Aldehído": "Aldehyde",
+  "Cetona": "Ketone",
+  "Ácido carboxílico": "Carboxylic acid",
+  "Éster": "Ester",
+  "Amina": "Amine",
+  "Amida": "Amide",
+  "Éster metílico": "Methyl ester",
+  "grupo hidroxilo": "hydroxyl group",
+  "grupo metoxi": "methoxy group",
+  "carbonilo terminal": "terminal carbonyl",
+  "carbonilo interno": "internal carbonyl",
+  "carboxilo terminal": "terminal carboxyl",
+  "éster con metilo": "methyl ester",
+  "amina primaria": "primary amine",
+  "carbonilo con amino": "carbonyl with amino group",
+  "sustituyente halógeno": "halogen substituent",
+  "anillo aromático": "aromatic ring",
+  "Arriba": "Up",
+  "Abajo": "Down",
+  "Izquierda": "Left",
+  "Derecha": "Right",
+  "Grupos alquilo": "Alkyl groups",
+  "Anillos": "Rings",
+  "Grupos funcionales": "Functional groups",
+  "Nueva molécula": "New molecule",
+  "Unir al C seleccionado": "Attach to selected C",
+  "Reemplazar estructura": "Replace structure",
+  "Mostrar H implícitos": "Show implicit H",
+  "Mostrar numeración": "Show numbering",
+  "Resaltar sustituyentes": "Highlight substituents",
+  "Ocultar": "Hide",
+  "Mostrar": "Show",
+  "Copiar nombre": "Copy name",
+  "Muestra el nombre antes de copiarlo": "Show the name before copying it",
+  "Copiar nombre IUPAC": "Copy IUPAC name",
+  "Grupos funcionales detectados": "Detected functional groups",
+  "Ocultar ayuda de nomenclatura": "Hide nomenclature help",
+  "Mostrar ayuda de nomenclatura": "Show nomenclature help",
+  "Vista semidesarrollada": "Condensed structural view",
+  "Vista esquelética o de líneas": "Skeletal or line-angle view",
+  "Historial de cambios": "Change history",
+  "Ejemplos de nombres compatibles": "Compatible name examples",
+  "Orden del próximo enlace": "Next bond order",
+  "Añadir carbono": "Add carbon",
+  "Selecciona un carbono con una valencia libre": "Select a carbon with available valence",
+  "El nuevo anillo se unirá mediante un enlace simple al carbono seleccionado.": "The new ring will be connected to the selected carbon by a single bond.",
+  "El anillo elegido reemplazará la estructura actual y comenzará una molécula nueva.": "The selected ring will replace the current structure and start a new molecule.",
+  "Puedes repetir “Unir al C seleccionado” para construir moléculas con varios anillos. Los anillos quedan conectados por enlaces simples; no se fusionan ni comparten carbonos.": "You can repeat “Attach to selected C” to build molecules with multiple rings. Rings are connected by single bonds; they are not fused and do not share carbons.",
+  "Sustituyentes resaltados en amarillo para diferenciarlos de la cadena principal.": "Substituents are highlighted in yellow to distinguish them from the parent chain.",
+  "La numeración automática se oculta para no atribuir localizadores de carbono a sustituyentes N-.": "Automatic numbering is hidden to avoid assigning carbon locants to N-substituents.",
+  "Numeración N- conservada en el nombre": "N-locants preserved in the name",
+  "Nombre IUPAC oculto: formula tu respuesta antes de mostrarlo.": "IUPAC name hidden: formulate your answer before revealing it.",
+  "Nombre IUPAC visible nuevamente.": "IUPAC name is visible again.",
+  "Pulsa cada fragmento destacado para alternar su forma de nomenclatura.": "Tap each highlighted fragment to switch its nomenclature form.",
+  "Pulsa el nombre del ciclo para mostrar u omitir el localizador 1.": "Tap the ring name to show or omit locant 1.",
+  "Pulsa el sustituyente destacado para cambiar su forma; el orden alfabético se recalcula automáticamente.": "Tap the highlighted substituent to change its form; alphabetical order is recalculated automatically.",
+  "Pulsa el nombre para volver a la forma habitual de examen.": "Tap the name to return to the standard exam form.",
+  "Pulsa el nombre para consultar la forma técnica que interpreta el motor.": "Tap the name to view the technical form interpreted by the engine.",
+  "Estos descriptores reflejan cómo el motor geométrico codifica una forma de Kekulé del anillo con dobles enlaces alternados. No representan estructuras de resonancia distintas y, en la nomenclatura habitual, se omiten.": "These descriptors reflect how the geometry engine encodes one Kekulé form of the ring with alternating double bonds. They do not represent distinct resonance structures and are omitted in standard nomenclature.",
+  "Historial y Guardados permanecen separados y cada visitante ve únicamente sus propias estructuras.": "History and Saved remain separate, and each visitor sees only their own structures.",
+  "Alternar entre automático, claro y oscuro": "Switch between automatic, light, and dark",
+  "Eliminar del historial": "Remove from history",
+  "Eliminar de Guardados": "Remove from Saved",
+  "Retirar terminal": "Remove terminal atom",
+  "Al buscar la cadena más larga, parte del grupo añadido puede convertirse en cadena principal.": "When searching for the longest chain, part of the added group may become part of the parent chain.",
+  "Forma de insertar el anillo": "Ring insertion mode",
+  "Reinicia solo la estructura": "Resets only the structure",
+  "Este derivado se carga como ejemplo completo; usa Benceno para unir otro anillo": "This derivative loads as a complete example; use Benzene to attach another ring",
+  "Derivados halogenados": "Halogen derivatives",
+  "F, Cl, Br e I se nombran como prefijos": "F, Cl, Br, and I are named as prefixes",
+  "C terminal": "Terminal C",
+  "C interno": "Internal C",
+  "Para aldehídos, ácidos, ésteres y amidas usa un carbono terminal. Para una cetona, selecciona un carbono interno de la cadena.": "For aldehydes, acids, esters, and amides, use a terminal carbon. For a ketone, select an internal carbon in the chain.",
+  "Disponible en la vista semidesarrollada": "Available in condensed structural view",
+  "Numerar": "Number",
+  "anillo": "ring",
+  "cadena principal": "parent chain",
+  "Color uniforme activado: cadena principal y sustituyentes comparten el mismo color.": "Uniform color enabled: parent chain and substituents share the same color.",
+  "Crear enlace": "Create bond",
+  "Unir": "Attach",
+  "Cargar": "Load",
+  "actualmente": "currently",
+  "átomos": "atoms",
+  "Representación esquelética": "Skeletal representation",
+  "Representación semidesarrollada": "Condensed structural representation",
+  "Tipo de representación molecular": "Molecular representation type",
+  "Interpretando…": "Interpreting…",
+  "Crear estructura": "Create structure",
+  "Cada extremo y vértice representa un C; los H están implícitos.": "Each endpoint and vertex represents a C; H atoms are implicit.",
+  "Leyenda": "Legend",
+  "seleccionado": "selected",
+  "H implícito": "implicit H",
+  "H implícitos": "implicit H",
+  "valencia": "valence",
+  "Fluoro": "Fluoro",
+  "Cloro": "Chloro",
+  "Bromo": "Bromo",
+  "Yodo": "Iodo",
+};
+
+export function uiText(language: AppLanguage, spanish: string) {
+  if (language === "es") return spanish;
+  return ENGLISH_UI[spanish] ?? spanish;
+}
+
+export function detectInitialLanguage(): AppLanguage {
+  if (typeof window === "undefined") return "es";
+
+  const pathMatch = window.location.pathname.match(/\/(es|en)\/?$/i);
+  if (pathMatch) return pathMatch[1].toLowerCase() as AppLanguage;
+
+  try {
+    const saved = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
+    if (saved === "es" || saved === "en") return saved;
+  } catch {
+    // Storage may be disabled; browser language remains a safe fallback.
+  }
+
+  return window.navigator.language.toLowerCase().startsWith("es") ? "es" : "en";
+}
+
+export function languagePath(pathname: string, language: AppLanguage) {
+  const normalized = pathname.endsWith("/") ? pathname : `${pathname}/`;
+  if (/\/(es|en)\/$/i.test(normalized)) {
+    return normalized.replace(/\/(es|en)\/$/i, `/${language}/`);
+  }
+  return `${normalized}${language}/`.replace(/\/+/g, "/");
+}
+
+export function pageMetadata(language: AppLanguage) {
+  return language === "en"
+    ? {
+        title: "Hydrocarbon Lab | Sciu Science",
+        description:
+          "Interactive organic chemistry laboratory for building hydrocarbons and functional groups, validating valence, and exploring IUPAC nomenclature.",
+      }
+    : {
+        title: "Laboratorio de Hidrocarburos | Sciu Science",
+        description:
+          "Laboratorio interactivo de química orgánica para construir hidrocarburos y grupos funcionales, validar valencias y explorar la nomenclatura IUPAC.",
+      };
+}
+
+const dynamicExact: Record<string, string> = {
+  "Preparando tu historial…": "Preparing your history…",
+  "Selecciona un carbono para añadir otro o toca un enlace para cambiar su orden.": "Select a carbon to add another one, or tap a bond to change its order.",
+  "En esta etapa, los nuevos enlaces desde O o N se añaden como enlaces simples para conservar un grupo funcional reconocido.": "At this stage, new bonds from O or N are added as single bonds to preserve a recognized functional group.",
+  "Ese espacio ya está ocupado. Prueba otra dirección.": "That space is already occupied. Try another direction.",
+  "Los enlaces de O, N y halógenos quedan fijados para conservar el grupo funcional. Retira el átomo terminal y elige otro grupo si deseas cambiarlo.": "Bonds involving O, N, and halogens are locked to preserve the functional group. Remove the terminal atom and choose another group if you want to change it.",
+  "Los enlaces internos del benceno están fijados para conservar su aromaticidad.": "Internal benzene bonds are locked to preserve aromaticity.",
+  "Selecciona un carbono para añadir un grupo alquilo.": "Select a carbon to add an alkyl group.",
+  "No hay espacio libre para ese grupo. Selecciona otro carbono o retira una ramificación.": "There is no free space for that group. Select another carbon or remove a branch.",
+  "La molécula debe conservar al menos un carbono.": "The molecule must contain at least one carbon.",
+  "Solo puedes retirar un átomo terminal para no cortar la molécula en dos.": "You can only remove a terminal atom so the molecule is not split in two.",
+  "Ya existe un nodo en esa dirección; selecciónalo o utiliza otra flecha.": "A node already exists in that direction; select it or use another arrow.",
+  "No hay un vecino en esa dirección. Usa ↑ o ↓ para crear una ramificación desde este nodo.": "There is no neighbor in that direction. Use ↑ or ↓ to create a branch from this node.",
+  "No hay un vecino anterior identificado. Muévete primero con ← o → y vuelve a pulsar 1, 2 o 3.": "No previous neighbor is identified. Move first with ← or →, then press 1, 2, or 3 again.",
+  "Los enlaces que unen un anillo con otra parte de la molécula se mantienen simples.": "Bonds connecting a ring to another part of the molecule remain single.",
+  "El atajo X no elimina vértices de un anillo, porque alteraría su cierre y su aromaticidad.": "The X shortcut does not remove ring vertices because that would alter ring closure and aromaticity.",
+  "No se puede reconectar de forma inequívoca un nodo con tres o más vecinos. Elimina primero una rama terminal.": "A node with three or more neighbors cannot be reconnected unambiguously. Remove a terminal branch first.",
+  "Último cambio deshecho.": "Last change undone.",
+  "El historial se borró sin modificar Guardados ni la estructura actual.": "History was cleared without changing Saved structures or the current structure.",
+  "Molécula nueva: comienza desde un átomo de carbono.": "New molecule: start from a carbon atom.",
+  "Vista esquelética activada: cada extremo y cada vértice representa un carbono.": "Skeletal view enabled: each endpoint and vertex represents a carbon.",
+  "Vista semidesarrollada activada: se muestran los carbonos y sus hidrógenos implícitos.": "Condensed structural view enabled: carbons and their implicit hydrogens are shown.",
+  "Nombre copiado al portapapeles.": "Name copied to clipboard.",
+  "Ayuda de nomenclatura oculta: modo examen activado.": "Nomenclature help hidden: exam mode enabled.",
+  "Ayuda de nomenclatura visible nuevamente.": "Nomenclature help is visible again.",
+  "Guardado para este navegador": "Saved in this browser",
+  "Sincronizado con tu cuenta": "Synced with your account",
+  "Guardando esta estructura…": "Saving this structure…",
+  "No se pudo guardar en este navegador.": "Could not save in this browser.",
+  "Historial no disponible.": "History unavailable.",
+  "No se pudo guardar.": "Could not save.",
+  "No se pudo eliminar.": "Could not delete.",
+  "Historial borrado. Tus estructuras de Guardados y la estructura actual se conservaron.": "History cleared. Your Saved structures and the current structure were preserved.",
+  "Escribe un nombre IUPAC para crear la estructura.": "Enter an IUPAC name to create the structure.",
+  "El motor no puede interpretar heterociclos o aminas complejas en este momento.": "The engine cannot interpret heterocycles or complex amines at this time.",
+  "OpenChemLib no pudo convertir la estructura recibida.": "OpenChemLib could not convert the received structure.",
+  "La molécula es demasiado grande para editarla con claridad en este canvas.": "The molecule is too large to edit clearly on this canvas.",
+  "La estructura contiene cargas formales que este canvas todavía no representa.": "The structure contains formal charges that this canvas does not yet represent.",
+  "El laboratorio necesita una estructura orgánica con carbono.": "The laboratory requires an organic structure containing carbon.",
+  "La estructura contiene un tipo de enlace aún no editable.": "The structure contains a bond type that is not editable yet.",
+  "El nombre describe varias especies separadas; construye una molécula orgánica a la vez.": "The name describes multiple separate species; build one organic molecule at a time.",
+  "OpenChemLib reconoció un sistema de anillos fusionados. Su análisis y edición se incorporarán en una próxima ampliación.": "OpenChemLib recognized a fused-ring system. Analysis and editing will be added in a future expansion.",
+  "OPSIN no reconoció ese nombre.": "OPSIN did not recognize that name.",
+  "OPSIN devolvió una respuesta que no se pudo leer.": "OPSIN returned a response that could not be read.",
+  "El motor químico no pudo interpretar ese nombre IUPAC. Revisa localizadores, paréntesis, guiones y sufijos.": "The chemistry engine could not interpret that IUPAC name. Check locants, parentheses, hyphens, and suffixes.",
+  "No fue posible conectar con OPSIN. Revisa tu conexión y vuelve a intentarlo; el constructor local seguirá disponible.": "Could not connect to OPSIN. Check your connection and try again; the local builder remains available.",
+  "No fue posible leer este documento químico.": "This chemistry document could not be read.",
+  "El documento supera el límite de 4 MB.": "The document exceeds the 4 MB limit.",
+  "El archivo no contiene un documento químico válido.": "The file does not contain a valid chemistry document.",
+  "Este archivo no pertenece a una versión compatible del laboratorio.": "This file does not belong to a compatible version of the laboratory.",
+  "El documento no contiene estructuras orgánicas válidas.": "The document does not contain valid organic structures.",
+  "En los ciclos de esta etapa, los sustituyentes se conectan al anillo con enlaces simples.": "At this stage, substituents are connected to rings with single bonds.",
+  "Los enlaces que unen un anillo con un sustituyente u otro anillo se mantienen simples; toca un enlace interno del ciclo para cambiarlo.": "Bonds connecting a ring to a substituent or another ring remain single; tap an internal ring bond to change it.",
+  "Los grupos funcionales de la biblioteca se incorporan desde un carbono seleccionado.": "Functional groups from the library are added from a selected carbon.",
+  "No hay espacio libre para dibujar ese grupo. Prueba otro carbono o retira una rama cercana.": "There is not enough free space to draw that group. Try another carbon or remove a nearby branch.",
+  "El carbono seleccionado forma parte del anillo y no puede retirarse. Elige un sustituyente terminal.": "The selected carbon is part of a ring and cannot be removed. Choose a terminal substituent.",
+  "Para crear una rama con ↑ o ↓, selecciona un nodo que tenga vecinos a izquierda y derecha.": "To create a branch with ↑ or ↓, select a node with neighbors on both the left and right.",
+  "Cambio rehecho.": "Change redone.",
+  "Selecciona un carbono antes de unir un anillo.": "Select a carbon before attaching a ring.",
+  "Ese carbono ya tiene valencia 4. Selecciona otro carbono antes de unir el anillo.": "That carbon already has valence 4. Select another carbon before attaching the ring.",
+  "No hay espacio suficiente alrededor del carbono seleccionado para colocar ese anillo.": "There is not enough space around the selected carbon to place that ring.",
+  "Tema automático: sigue el dispositivo y activa la vista oscura entre las 19:00 y las 07:00.": "Automatic theme: follows the device and switches to dark view between 19:00 and 07:00.",
+  "Sustituyentes resaltados en amarillo para diferenciarlos de la cadena principal.": "Substituents are highlighted in yellow to distinguish them from the parent chain.",
+  "Color uniforme activado: cadena principal y sustituyentes comparten el mismo color.": "Uniform color enabled: parent chain and substituents share the same color.",
+  "Nombre IUPAC oculto: formula tu respuesta antes de mostrarlo.": "IUPAC name hidden: formulate your answer before revealing it.",
+  "Nombre IUPAC visible nuevamente.": "IUPAC name is visible again.",
+  "No se pudo cargar el historial.": "Could not load history.",
+  "No se pudo cargar Guardados.": "Could not load Saved structures.",
+  "No se pudo borrar el historial.": "Could not clear history.",
+  "No pude interpretar ese nombre IUPAC.": "I could not interpret that IUPAC name.",
+};
+
+export function dynamicUiText(language: AppLanguage, value: string | null | undefined) {
+  if (!value || language === "es") return value ?? "";
+  const exact = dynamicExact[value] ?? ENGLISH_UI[value];
+  if (exact) return exact;
+
+  return value
+    .replace(/^Acción bloqueada:/, "Action blocked:")
+    .replace(/No se puede añadir/g, "Cannot add")
+    .replace(/porque ya tiene/g, "because it already has")
+    .replace(/porque alcanzaría/g, "because it would reach")
+    .replace(/y su máximo es/g, "and its maximum is")
+    .replace(/enlaces/g, "bonds")
+    .replace(/enlace simple/g, "single bond")
+    .replace(/enlace doble/g, "double bond")
+    .replace(/enlace triple/g, "triple bond")
+    .replace(/Carbono añadido/g, "Carbon added")
+    .replace(/El nombre se recalculó automáticamente/g, "The name was recalculated automatically")
+    .replace(/Fórmula y nombre recalculados/g, "Formula and name recalculated")
+    .replace(/Fórmula, grupo principal y nombre recalculados/g, "Formula, principal group, and name recalculated")
+    .replace(/quedó añadido a Guardados/g, "was added to Saved")
+    .replace(/se eliminó del historial/g, "was removed from history")
+    .replace(/se eliminó de Guardados/g, "was removed from Saved")
+    .replace(/se descargó como documento \.quimica/g, "was downloaded as a .quimica document")
+    .replace(/se importó desde/g, "was imported from")
+    .replace(/y está lista para editar/g, "and is ready to edit")
+    .replace(/Estructura creada desde/g, "Structure created from")
+    .replace(/Puedes seguir editándola átomo por átomo/g, "You can keep editing it atom by atom")
+    .replace(/Ya quedó añadida a tu historial automático/g, "It has been added to your automatic history")
+    .replace(/Configuración cambiada a/g, "Configuration changed to")
+    .replace(/Nombre aromático habitual/g, "Standard aromatic name")
+    .replace(/Nombre técnico visible/g, "Technical name visible");
+}
+
+export function translateCommonName(language: AppLanguage, value?: string) {
+  if (!value || language === "es") return value;
+  const map: Record<string, string> = {
+    acetona: "acetone",
+    anilina: "aniline",
+    catecol: "catechol",
+    resorcinol: "resorcinol",
+    hidroquinona: "hydroquinone",
+    floroglucinol: "phloroglucinol",
+    tolueno: "toluene",
+    "o-xileno": "o-xylene",
+    "m-xileno": "m-xylene",
+    "p-xileno": "p-xylene",
+  };
+  return map[value.toLocaleLowerCase("es")] ?? value;
+}
+
+export function englishReasoningTitle(title: string) {
+  const map: Record<string, string> = {
+    "Prioridad del grupo funcional": "Functional-group priority",
+    "Cadena principal": "Parent chain",
+    "Numeración razonada": "Numbering",
+    "Sustituyentes": "Substituents",
+    "Orden alfabético": "Alphabetical order",
+    "Estereoquímica (E/Z o R/S)": "Stereochemistry (E/Z or R/S)",
+  };
+  return map[title] ?? title;
+}
