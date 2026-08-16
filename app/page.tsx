@@ -2937,18 +2937,17 @@ function buildEnglishReasoningSteps(
           : analysis.family === "polycyclic"
             ? "ring system"
             : "continuous carbon chain";
-      explanation = `The ${family} selected as the parent contains ${analysis.mainChain.length} carbon${analysis.mainChain.length === 1 ? "" : "s"}. Its parent name is ${parentName}; the complete name is ${englishName}.`;
+      explanation = `The ${family} chosen as the parent contains ${analysis.mainChain.length} carbon${analysis.mainChain.length === 1 ? "" : "s"}. The parent name is ${parentName}; the complete IUPAC name is ${englishName}.`;
     } else if (step.number === "03") {
-      const priority = primaryLabel
-        ? `the principal group (${primaryLabel}) first`
-        : "the first point of difference";
       const unsaturation = multipleBonds.length
         ? ` Multiple bonds are located at ${multipleBonds.join(", ")}.`
         : "";
-      explanation = `Numbering is chosen from the end that gives ${priority}, then multiple bonds, and finally substituents the lowest set of locants.${unsaturation}`;
+      explanation = primaryLabel
+        ? `Numbering is chosen to give the principal group (${primaryLabel}) the lowest permitted locant. If both directions remain equivalent, multiple bonds are considered next, followed by substituents at the first point of difference.${unsaturation}`
+        : `Numbering is chosen from the end that gives the lowest locant at the first point of difference. Multiple bonds are considered before substituents.${unsaturation}`;
     } else if (step.number === "04") {
       explanation = substituentList
-        ? `The substituents are located and named from the numbered parent skeleton: ${substituentList}. Multiplicative prefixes are used when the same substituent appears more than once.`
+        ? `Substituent names and locants are assigned from the numbered parent skeleton: ${substituentList}. Multiplicative prefixes such as di-, tri-, and tetra- are used when the same substituent occurs more than once.`
         : "No carbon substituents need to be added to the parent name.";
     } else if (step.number === "05") {
       const names = [...new Set(analysis.substituents.map((item) =>

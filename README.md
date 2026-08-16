@@ -1,4 +1,4 @@
-# vinext-starter
+# Hydrocarbon Lab
 
 ## Hydrocarbon Lab / Laboratorio de Hidrocarburos
 
@@ -9,9 +9,9 @@ una biblioteca personal importable y exportable mediante archivos `.quimica`.
 El selector de idioma recuerda la preferencia del visitante y las versiones
 pueden compartirse directamente mediante `/es/` y `/en/`.
 
-- GitHub Pages: https://sciuscience-dotcom.github.io/laboratorio-hidrocarburos/
-- Español: https://sciuscience-dotcom.github.io/laboratorio-hidrocarburos/es/
-- English: https://sciuscience-dotcom.github.io/laboratorio-hidrocarburos/en/
+- GitHub Pages: https://sciu-lab.github.io/Hydrocarbon-Lab/
+- Español: https://sciu-lab.github.io/Hydrocarbon-Lab/es/
+- English: https://sciu-lab.github.io/Hydrocarbon-Lab/en/
 
 La versión de GitHub Pages se genera automáticamente desde la rama `main` con
 `npm run build:pages`. En GitHub Pages, el historial queda guardado localmente

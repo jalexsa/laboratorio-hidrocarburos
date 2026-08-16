@@ -76,6 +76,11 @@ const ENGLISH_UI: Record<string, string> = {
   "orden de enlace · E ↔ Z en C=C": "bond order · E ↔ Z on C=C",
   "Anillo principal": "Parent ring",
   "Cadena principal": "Parent chain",
+  "Cadena principal o anillo": "Parent chain or ring",
+  "Grupo funcional principal": "Principal functional group",
+  "Sustituyentes y localizadores": "Substituents and locants",
+  "Numeración razonada": "Numbering",
+  "Orden alfabético": "Alphabetical order",
   "Sustituyente": "Substituent",
   "Estructura uniforme": "Uniform structure",
   "Atajos del canvas": "Canvas shortcuts",
@@ -438,11 +443,15 @@ export function translateCommonName(language: AppLanguage, value?: string) {
 export function englishReasoningTitle(title: string) {
   const map: Record<string, string> = {
     "Prioridad del grupo funcional": "Functional-group priority",
+    "Grupo funcional principal": "Principal functional group",
     "Cadena principal": "Parent chain",
+    "Anillo principal": "Parent ring",
+    "Cadena principal o anillo": "Parent chain or ring",
     "Numeración razonada": "Numbering",
     "Sustituyentes": "Substituents",
+    "Sustituyentes y localizadores": "Substituents and locants",
     "Orden alfabético": "Alphabetical order",
     "Estereoquímica (E/Z o R/S)": "Stereochemistry (E/Z or R/S)",
   };
-  return map[title] ?? title;
+  return map[title] ?? ENGLISH_UI[title] ?? title;
 }
