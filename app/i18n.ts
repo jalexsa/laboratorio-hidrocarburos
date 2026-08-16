@@ -98,7 +98,7 @@ const ENGLISH_UI: Record<string, string> = {
   "Cerrar biblioteca de anillos": "Close ring library",
   "Cicloalcanos": "Cycloalkanes",
   "CₙH₂ₙ · enlaces simples": "CₙH₂ₙ · single bonds",
-  "Aromáticos monocíclicos": "Monocyclic aromatics",
+  "Aromáticos monocíclicos": "Aromatic Rings",
   "Benceno y derivados alquilados": "Benzene and alkyl derivatives",
   "Benceno": "Benzene",
   "Tolueno": "Toluene",
@@ -139,6 +139,7 @@ const ENGLISH_UI: Record<string, string> = {
   "Alcance actual:": "Current scope:",
   "hidrocarburos y nueve familias funcionales con O, N y halógenos.": "hydrocarbons and nine functional-group families containing O, N, and halogens.",
   "Los hidrógenos se completan automáticamente respetando las valencias de C, O, N y halógenos.": "Hydrogens are completed automatically while respecting the valences of C, O, N, and halogens.",
+  "Síguenos en Instagram: @sciu.science": "Follow us on Instagram: @sciu.science",
   "Descubrir crédito del autor": "Reveal author credit",
   "Hay algo escondido aquí": "There is something hidden here",
   "Una experiencia creada por": "An experience created by",
@@ -319,6 +320,8 @@ export function pageMetadata(language: AppLanguage) {
 }
 
 const dynamicExact: Record<string, string> = {
+  "Nombre técnico visible: muestra los descriptores que calcula el motor para los dobles enlaces alternados.": "Technical name visible: shows the descriptors the engine calculates for alternating double bonds.",
+  "Nombre aromático habitual: se omiten los descriptores de la forma de Kekulé.": "Standard aromatic name: omits the descriptors for the Kekulé representation.",
   "Preparando tu historial…": "Preparing your history…",
   "Selecciona un carbono para añadir otro o toca un enlace para cambiar su orden.": "Select a carbon to add another one, or tap a bond to change its order.",
   "En esta etapa, los nuevos enlaces desde O o N se añaden como enlaces simples para conservar un grupo funcional reconocido.": "At this stage, new bonds from O or N are added as single bonds to preserve a recognized functional group.",

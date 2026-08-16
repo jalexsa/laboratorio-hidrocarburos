@@ -251,9 +251,9 @@ export function getSkeletalRingDoubleBondSegments(
   }
 
   // La línea exterior coincide con el lado geométrico del polígono. La línea
-  // interior queda aproximadamente un 30 % más cerca (4,55–5,95 px entre
-  // ejes), manteniendo legible el doble enlace con proporción de libro.
-  const innerInset = clamp(length * 0.0385, 4.55, 5.95);
+  // interior se desplaza un poco más hacia el centro (≈6,25–7,8 px entre
+  // ejes) para que en benceno y ciclohexeno se distingan dos trazos claros.
+  const innerInset = clamp(length * 0.05, 6.25, 7.8);
   const endpointTrim = clamp(length * 0.09, 10, 18);
 
   return [
