@@ -5719,31 +5719,45 @@ export default function Home() {
                   y2: positionB.y + normalY * offset,
                   role: null,
                 }));
+                const startNumberObstacle = effectiveShowNumbering
+                  && carbonCount > 1
+                  && isCarbonAtom(atomA)
+                  && analysis.numberedAtoms.has(a)
+                  ? {
+                      center: {
+                        x: positionA.x + skeletalNumberBadgeOffsets.get(a)!.x,
+                        y: positionA.y + skeletalNumberBadgeOffsets.get(a)!.y,
+                      },
+                      radius: SKELETAL_NUMBER_BADGE_CLEARANCE,
+                    }
+                  : undefined;
+                const endNumberObstacle = effectiveShowNumbering
+                  && carbonCount > 1
+                  && isCarbonAtom(atomB)
+                  && analysis.numberedAtoms.has(b)
+                  ? {
+                      center: {
+                        x: positionB.x + skeletalNumberBadgeOffsets.get(b)!.x,
+                        y: positionB.y + skeletalNumberBadgeOffsets.get(b)!.y,
+                      },
+                      radius: SKELETAL_NUMBER_BADGE_CLEARANCE,
+                    }
+                  : undefined;
+                const startHeteroObstacle = viewMode === "skeletal" && !isCarbonAtom(atomA)
+                  ? {
+                      center: positionA,
+                      radius: 22,
+                    }
+                  : undefined;
+                const endHeteroObstacle = viewMode === "skeletal" && !isCarbonAtom(atomB)
+                  ? {
+                      center: positionB,
+                      radius: 22,
+                    }
+                  : undefined;
                 const bondClipOptions = {
-                  startObstacle: effectiveShowNumbering
-                    && carbonCount > 1
-                    && isCarbonAtom(atomA)
-                    && analysis.numberedAtoms.has(a)
-                    ? {
-                        center: {
-                          x: positionA.x + skeletalNumberBadgeOffsets.get(a)!.x,
-                          y: positionA.y + skeletalNumberBadgeOffsets.get(a)!.y,
-                        },
-                        radius: SKELETAL_NUMBER_BADGE_CLEARANCE,
-                      }
-                    : undefined,
-                  endObstacle: effectiveShowNumbering
-                    && carbonCount > 1
-                    && isCarbonAtom(atomB)
-                    && analysis.numberedAtoms.has(b)
-                    ? {
-                        center: {
-                          x: positionB.x + skeletalNumberBadgeOffsets.get(b)!.x,
-                          y: positionB.y + skeletalNumberBadgeOffsets.get(b)!.y,
-                        },
-                        radius: SKELETAL_NUMBER_BADGE_CLEARANCE,
-                      }
-                    : undefined,
+                  startObstacle: startNumberObstacle ?? startHeteroObstacle,
+                  endObstacle: endNumberObstacle ?? endHeteroObstacle,
                 };
                 const visibleBondSegments = viewMode === "skeletal" && order > 1
                   ? ringDoubleBondSegments
@@ -5853,22 +5867,20 @@ export default function Home() {
                 const position = displayPositions.get(atom.id)!;
                 const numberBadgeOffset = skeletalNumberBadgeOffsets.get(atom.id)
                   ?? SKELETAL_NUMBER_BADGE_OFFSET;
+                const showHydrogenOnLabel = viewMode === "skeletal" || showHydrogens;
                 const atomLabel = carbonAtom
-                  ? showHydrogens
+                  ? showHydrogenOnLabel
                     ? hydrogenCount === 0
                       ? "C"
                       : "CH"
                     : "C"
-                  : viewMode === "skeletal"
-                    ? hydrogenCount
-                      ? `H`
-                      : element
-                    : showHydrogens && hydrogenCount
-                      ? `H`
-                      : element;
-                const hydrogenSubscript = showHydrogens && hydrogenCount > 1
+                  : showHydrogenOnLabel && hydrogenCount > 0
+                    ? `${element}H`
+                    : element;
+                const hydrogenSubscript = showHydrogenOnLabel && hydrogenCount > 1
                   ? hydrogenCount
                   : undefined;
+                const heteroBadgeWidth = atomLabel.length >= 3 ? 40 : atomLabel.length === 2 ? 31 : 24;
                 return (
                   <g
                     key={atom.id}
@@ -5916,8 +5928,32 @@ export default function Home() {
                         </>
                       ) : (
                         <>
-                          <circle className="skeletal-hit-target skeletal-hetero-hit-target" r="24" />
-                          {isSelected && <circle className="skeletal-selection-ring skeletal-hetero-selection-ring" r="18" />}
+                          <rect
+                            className="skeletal-hetero-hit-target"
+                            x={-heteroBadgeWidth / 2 - 8}
+                            y={-18}
+                            width={heteroBadgeWidth + 16}
+                            height={36}
+                            rx={18}
+                          />
+                          {isSelected && (
+                            <rect
+                              className="skeletal-selection-ring skeletal-hetero-selection-ring"
+                              x={-heteroBadgeWidth / 2 - 4}
+                              y={-14}
+                              width={heteroBadgeWidth + 8}
+                              height={28}
+                              rx={14}
+                            />
+                          )}
+                          <rect
+                            className="skeletal-hetero-badge"
+                            x={-heteroBadgeWidth / 2}
+                            y={-13}
+                            width={heteroBadgeWidth}
+                            height={26}
+                            rx={13}
+                          />
                           <text className="atom-label skeletal-hetero-label" textAnchor="middle" dominantBaseline="central">
                             <tspan>{atomLabel}</tspan>
                             {hydrogenSubscript && (
