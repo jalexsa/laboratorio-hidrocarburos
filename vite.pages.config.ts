@@ -7,7 +7,7 @@ const outputDirectory = fileURLToPath(new URL("./dist-pages", import.meta.url));
 
 export default defineConfig({
   root: pagesRoot,
-  base: "/laboratorio-hidrocarburos/",
+  base: "/Hydrocarbon-Lab/",
   plugins: [react()],
   publicDir: fileURLToPath(new URL("./public", import.meta.url)),
   build: {
