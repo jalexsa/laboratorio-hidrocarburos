@@ -9,7 +9,7 @@ export default defineConfig({
   root: pagesRoot,
   base: "/laboratorio-hidrocarburos/",
   plugins: [react()],
-  publicDir: false,
+  publicDir: fileURLToPath(new URL("./public", import.meta.url)),
   build: {
     outDir: outputDirectory,
     emptyOutDir: true,

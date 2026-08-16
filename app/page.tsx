@@ -5188,10 +5188,8 @@ export default function Home() {
   return (
     <main className="app-shell" onPointerDownCapture={dismissValenceAlert}>
       <header className="site-header">
-        <div className="brand-mark" aria-hidden="true">
-          <span>C</span>
-          <i />
-          <span>O</span>
+        <div className="brand-mark">
+          <img src="../sciu-eye.png" alt="Sciu Science" />
         </div>
         <div className="brand-copy">
           <p>{t("Laboratorio interactivo")}</p>
@@ -6215,8 +6213,8 @@ export default function Home() {
                           </svg>
                         </span>
                         <span className="ring-option-copy">
-                          <strong>{template.label}</strong>
-                          <small>{template.formula} · {template.detail}</small>
+                          <strong>{localizedIupac(template.label)}</strong>
+                          <small>{template.formula} · {localizedDetail(template.detail)}</small>
                         </span>
                       </button>
                     );
