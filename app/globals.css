@@ -4884,3 +4884,61 @@ html[data-theme="dark"] .canvas-keyboard-shortcuts kbd {
     gap: 2px;
   }
 }
+
+/* Language selector */
+.language-switch {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px;
+  border: 1px solid #cce0d9;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.75);
+  box-shadow: 0 5px 16px rgba(30, 74, 64, 0.05);
+}
+
+.language-switch button {
+  min-width: 34px;
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #687b76;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  transition: 150ms ease;
+}
+
+.language-switch button:hover {
+  color: #285f52;
+}
+
+.language-switch button.active {
+  background: #dceee8;
+  color: #1f6655;
+  box-shadow: inset 0 0 0 1px rgba(39, 112, 95, 0.08);
+}
+
+html[data-theme="dark"] .language-switch {
+  border-color: #35564f;
+  background: rgba(20, 34, 31, 0.84);
+}
+
+html[data-theme="dark"] .language-switch button {
+  color: #a6bbb5;
+}
+
+html[data-theme="dark"] .language-switch button.active {
+  background: #23483f;
+  color: #d8eee7;
+}
+
+@media (max-width: 760px) {
+  .language-switch button {
+    min-width: 30px;
+    min-height: 28px;
+    padding: 3px 6px;
+  }
+}

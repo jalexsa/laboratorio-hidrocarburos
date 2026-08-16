@@ -1,13 +1,17 @@
 # vinext-starter
 
-## Laboratorio de hidrocarburos
+## Hydrocarbon Lab / Laboratorio de Hidrocarburos
 
-Simulación didáctica para construir y analizar estructuras de química orgánica
-en vista semidesarrollada o esquelética. Incluye hidrocarburos, ciclos,
-aromáticos, grupos funcionales, un constructor desde nombres IUPAC y una
-biblioteca personal importable y exportable mediante archivos `.quimica`.
+Simulación didáctica bilingüe (ES/EN) para construir y analizar estructuras de
+química orgánica en vista semidesarrollada o esquelética. Incluye hidrocarburos,
+ciclos, aromáticos, grupos funcionales, un constructor desde nombres IUPAC y
+una biblioteca personal importable y exportable mediante archivos `.quimica`.
+El selector de idioma recuerda la preferencia del visitante y las versiones
+pueden compartirse directamente mediante `/es/` y `/en/`.
 
 - GitHub Pages: https://sciuscience-dotcom.github.io/laboratorio-hidrocarburos/
+- Español: https://sciuscience-dotcom.github.io/laboratorio-hidrocarburos/es/
+- English: https://sciuscience-dotcom.github.io/laboratorio-hidrocarburos/en/
 
 La versión de GitHub Pages se genera automáticamente desde la rama `main` con
 `npm run build:pages`. En GitHub Pages, el historial queda guardado localmente

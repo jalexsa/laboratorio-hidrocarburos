@@ -5,12 +5,25 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="Simulación didáctica para construir hidrocarburos, grupos funcionales y analizar su nomenclatura orgánica."
+      content="Laboratorio interactivo bilingüe de química orgánica para construir hidrocarburos y explorar nomenclatura IUPAC."
     />
-    <title>Constructor de química orgánica</title>
+    <title>Sciu Science · Hydrocarbon Lab</title>
+    <script>
+      (() => {
+        let saved = null;
+        try {
+          saved = localStorage.getItem("hydrocarbon-lab-language");
+        } catch {
+          // Storage may be disabled; browser language remains a safe fallback.
+        }
+        const language = saved === "es" || saved === "en"
+          ? saved
+          : navigator.language.toLowerCase().startsWith("es") ? "es" : "en";
+        window.location.replace(new URL(`${language}/`, window.location.href).href);
+      })();
+    </script>
   </head>
   <body class="antialiased">
-    <div id="root"></div>
-    <script type="module" src="/main.tsx"></script>
+    <noscript>Choose a language / Elige un idioma: <a href="./es/">ES</a> · <a href="./en/">EN</a></noscript>
   </body>
 </html>

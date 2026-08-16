@@ -10,6 +10,18 @@ import {
   useState,
 } from "react";
 import { buildHydrocarbonFromIupacName } from "./name-to-molecule";
+import { translateSpanishIupacToOpsin } from "./iupac-name-normalization";
+import {
+  type AppLanguage,
+  detectInitialLanguage,
+  dynamicUiText,
+  englishReasoningTitle,
+  LANGUAGE_STORAGE_KEY,
+  languagePath,
+  pageMetadata,
+  translateCommonName,
+  uiText,
+} from "./i18n";
 import {
   type NameStructureResolution,
   resolveNameWithOpsin,
@@ -2893,6 +2905,73 @@ export function buildIupacReasoningSteps(
   return steps;
 }
 
+function buildEnglishReasoningSteps(
+  steps: IupacReasoningStep[],
+  molecule: Molecule,
+  analysis: Analysis,
+): IupacReasoningStep[] {
+  const englishName = translateSpanishIupacToOpsin(analysis.name) || analysis.name;
+  const parentName = translateSpanishIupacToOpsin(analysis.chainName) || analysis.chainName;
+  const primaryLabel = analysis.primaryFunctionalLabel
+    ? uiText("en", analysis.primaryFunctionalLabel)
+    : undefined;
+  const substituentList = analysis.substituents
+    .map((item) => `${item.locant}-${translateSpanishIupacToOpsin(item.name) || item.name}`)
+    .join(", ");
+  const multipleBonds = [
+    ...analysis.doubleBondLocants.map((locant) => `C${locant}=C${locant + 1}`),
+    ...analysis.tripleBondLocants.map((locant) => `C${locant}≡C${locant + 1}`),
+  ];
+
+  return steps.map((step) => {
+    let explanation: string;
+    if (step.number === "01") {
+      explanation = primaryLabel
+        ? `${primaryLabel} has the highest naming priority among the detected functional groups. It determines the suffix, and the parent skeleton is numbered to give this function the lowest permitted locant.`
+        : "Functional-group priority is checked before the parent skeleton is numbered.";
+    } else if (step.number === "02") {
+      const family = analysis.family === "aromatic"
+        ? "aromatic ring"
+        : analysis.family === "cycloalkane"
+          ? "ring"
+          : analysis.family === "polycyclic"
+            ? "ring system"
+            : "continuous carbon chain";
+      explanation = `The ${family} selected as the parent contains ${analysis.mainChain.length} carbon${analysis.mainChain.length === 1 ? "" : "s"}. Its parent name is ${parentName}; the complete name is ${englishName}.`;
+    } else if (step.number === "03") {
+      const priority = primaryLabel
+        ? `the principal group (${primaryLabel}) first`
+        : "the first point of difference";
+      const unsaturation = multipleBonds.length
+        ? ` Multiple bonds are located at ${multipleBonds.join(", ")}.`
+        : "";
+      explanation = `Numbering is chosen from the end that gives ${priority}, then multiple bonds, and finally substituents the lowest set of locants.${unsaturation}`;
+    } else if (step.number === "04") {
+      explanation = substituentList
+        ? `The substituents are located and named from the numbered parent skeleton: ${substituentList}. Multiplicative prefixes are used when the same substituent appears more than once.`
+        : "No carbon substituents need to be added to the parent name.";
+    } else if (step.number === "05") {
+      const names = [...new Set(analysis.substituents.map((item) =>
+        translateSpanishIupacToOpsin(item.name) || item.name,
+      ))].sort((a, b) => a.localeCompare(b, "en", { sensitivity: "base" }));
+      explanation = names.length
+        ? `Different substituent names are written in alphabetical order: ${names.join(" → ")}. Multiplicative prefixes such as di-, tri-, and tetra- do not control alphabetization.`
+        : "Substituent prefixes are ordered alphabetically when more than one different substituent is present.";
+    } else {
+      const descriptors = getMainChainStereoDescriptors(molecule, analysis.mainChain);
+      explanation = descriptors.length
+        ? `CIP priority rules are applied to each stereogenic double bond. ${descriptors.map((descriptor) => `${descriptor.locant}${descriptor.configuration} identifies the relative position of the higher-priority substituents`).join("; ")}.`
+        : "Stereochemical descriptors are assigned from molecular geometry using CIP priority rules when the structure requires them.";
+    }
+
+    return {
+      ...step,
+      title: englishReasoningTitle(step.title),
+      explanation,
+    };
+  });
+}
+
 const directionOptions = [
   { label: "Arriba", symbol: "↑", dx: 0, dy: -1, className: "north" },
   { label: "Izquierda", symbol: "←", dx: -1, dy: 0, className: "west" },
@@ -3001,10 +3080,10 @@ function getHistoryVisitorId() {
   return generated;
 }
 
-function formatHistoryDate(value: string) {
+function formatHistoryDate(value: string, language: AppLanguage = "es") {
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Guardado recientemente";
-  return new Intl.DateTimeFormat("es-CL", {
+  if (Number.isNaN(date.getTime())) return language === "en" ? "Saved recently" : "Guardado recientemente";
+  return new Intl.DateTimeFormat(language === "en" ? "en-US" : "es-CL", {
     day: "2-digit",
     month: "short",
     hour: "2-digit",
@@ -3035,7 +3114,7 @@ type LocalLibraryWritePayload = {
 
 const localLibraryStorageKey = "organic-lab-history-v1";
 function usesLocalLibrary() {
-  return window.location.hostname === "jalexsa.github.io"
+  return window.location.hostname.endsWith(".github.io")
     || window.location.protocol === "file:";
 }
 
@@ -3300,6 +3379,175 @@ function MoleculeHistoryPreview({ molecule }: { molecule: Molecule }) {
 }
 
 export default function Home() {
+  const [language, setLanguage] = useState<AppLanguage>(() => detectInitialLanguage());
+  const t = (spanish: string) => uiText(language, spanish);
+  const localizedIupac = (name: string) =>
+    language === "en" ? translateSpanishIupacToOpsin(name) || name : name;
+  const localizedCommonAlkylName = (name: string) => {
+    if (language === "es") return name;
+    const commonNames: Record<string, string> = {
+      isopropil: "isopropyl",
+      isobutil: "isobutyl",
+      "sec-butil": "sec-butyl",
+      "terc-butil": "tert-butyl",
+    };
+    return commonNames[name.toLocaleLowerCase("es")] ?? localizedIupac(name);
+  };
+  const localizedAlkylPartText = (part: InteractiveNamePart) => {
+    if (language === "en" && part.active && part.common) {
+      return part.text.replace(part.common, localizedCommonAlkylName(part.common));
+    }
+    return localizedIupac(part.text);
+  };
+  const localizedDynamicText = (value: string | null | undefined) => {
+    const source = value ?? "";
+    if (!source || language === "es") return source;
+
+    const continuing = source.match(/^Continuamos donde quedaste: (.+)\.$/);
+    if (continuing) return `Continuing where you left off: ${localizedIupac(continuing[1])}.`;
+
+    const saved = source.match(/^(.+) quedó añadido a Guardados\.$/);
+    if (saved) return `${localizedIupac(saved[1])} was added to Saved.`;
+
+    const removedHistory = source.match(/^(.+) se eliminó del historial\.$/);
+    if (removedHistory) return `${localizedIupac(removedHistory[1])} was removed from history.`;
+
+    const removedSaved = source.match(/^(.+) se eliminó de Guardados\.$/);
+    if (removedSaved) return `${localizedIupac(removedSaved[1])} was removed from Saved.`;
+
+    const imported = source.match(/^(.+) se importó desde (.+) y está lista para editar\.$/);
+    if (imported) return `${localizedIupac(imported[1])} was imported from ${imported[2]} and is ready to edit.`;
+
+    const terminalRequirement = source.match(/^(.+) requiere un carbono terminal: selecciona un CH₃ del extremo de la cadena\.$/);
+    if (terminalRequirement) return `${t(terminalRequirement[1])} requires a terminal carbon: select a CH₃ at the end of the chain.`;
+
+    const internalRequirement = source.match(/^(.+) requiere un carbono interno unido por enlaces simples a otros dos carbonos\.$/);
+    if (internalRequirement) return `${t(internalRequirement[1])} requires an internal carbon connected by single bonds to two other carbons.`;
+
+    const selectedByKeyboard = source.match(/^(.+) (\d+) seleccionado con el teclado\.$/);
+    if (selectedByKeyboard) return `${t(selectedByKeyboard[1])} ${selectedByKeyboard[2]} selected with the keyboard.`;
+
+    const alreadyAssigned = source.match(/^(.+) (\d+) ya tiene esa asignación\.$/);
+    if (alreadyAssigned) return `${t(alreadyAssigned[1])} ${alreadyAssigned[2]} already has that assignment.`;
+
+    const createGroup = source.match(/^Para crear (.+), selecciona un nodo terminal unido mediante un enlace simple\.$/);
+    if (createGroup) return `To create ${createGroup[1]}, select a terminal node connected by a single bond.`;
+
+    const previousBond = source.match(/^El enlace con el nodo anterior ya es (simple|doble|triple)\.$/);
+    if (previousBond) return `The bond to the previous node is already ${t(previousBond[1])}.`;
+
+    const selectedBond = source.match(/^Enlace (simple|doble|triple) seleccionado\. Añade un carbono o pulsa un enlace dibujado para cambiarlo\.$/);
+    if (selectedBond) return `${t(selectedBond[1])[0].toUpperCase()}${t(selectedBond[1]).slice(1)} bond selected. Add a carbon or tap a drawn bond to change it.`;
+
+    const selectedAtomNotice = source.match(/^(Carbono|Oxígeno|Nitrógeno|Flúor|Cloro|Bromo|Yodo) (.+) seleccionado\.$/);
+    if (selectedAtomNotice) return `${t(selectedAtomNotice[1])} ${selectedAtomNotice[2]} selected.`;
+
+    const restored = source.match(/^Estructura recuperada de (Guardados|tu historial): (.+)\.$/);
+    if (restored) return `Structure restored from ${restored[1] === "Guardados" ? "Saved" : "your history"}: ${localizedIupac(restored[2])}.`;
+
+    const example = source.match(/^Ejemplo cargado: (.+)\.$/);
+    if (example) return `Example loaded: ${localizedIupac(example[1])}.`;
+
+    const alkylAdded = source.match(/^(.+) añadido\. La cadena principal y el nombre se recalcularon\.$/);
+    if (alkylAdded) return `${localizedIupac(alkylAdded[1])} added. The parent chain and name were recalculated.`;
+
+    const functionalAdded = source.match(/^(.+) añadido \((.+)\)\. Fórmula, grupo principal y nombre recalculados\.$/);
+    if (functionalAdded) return `${t(functionalAdded[1])} added (${functionalAdded[2]}). Formula, principal group, and name were recalculated.`;
+
+    const attachedRing = source.match(/^(.+) unido mediante un enlace simple\. La estructura ahora contiene (\d+) anillos\.$/);
+    if (attachedRing) return `${localizedIupac(attachedRing[1])} attached with a single bond. The structure now contains ${attachedRing[2]} ring${attachedRing[2] === "1" ? "" : "s"}.`;
+
+    const ringLoaded = source.match(/^(.+) cargado\. Selecciona un carbono y vuelve a Anillos para unir otro\.$/);
+    if (ringLoaded) return `${localizedIupac(ringLoaded[1])} loaded. Select a carbon and return to Rings to attach another.`;
+
+    const carbonAdded = source.match(/^Carbono añadido al (.+) con enlace (simple|doble|triple)\. El nombre se recalculó automáticamente\.$/);
+    if (carbonAdded) return `Carbon added to ${t(carbonAdded[1])} with a ${t(carbonAdded[2])} bond. The name was recalculated automatically.`;
+
+    const bondUpdated = source.match(/^Enlace actualizado: (simple|doble|triple) → (simple|doble|triple)\. Fórmula y nombre recalculados\.$/);
+    if (bondUpdated) return `Bond updated: ${t(bondUpdated[1])} → ${t(bondUpdated[2])}. Formula and name recalculated.`;
+
+    const keyboardCarbon = source.match(/^Atajo de dibujo: Carbono (\d+) añadido con enlace simple y seleccionado\.$/);
+    if (keyboardCarbon) return `Drawing shortcut: carbon ${keyboardCarbon[1]} added with a single bond and selected.`;
+
+    const convertedNode = source.match(/^Nodo (\d+) convertido en (.+) mediante el atajo (.+)\.$/);
+    if (convertedNode) return `Node ${convertedNode[1]} converted to ${convertedNode[2]} using the ${convertedNode[3]} shortcut.`;
+
+    const shortcutBond = source.match(/^Atajo ([123]): enlace con el nodo anterior cambiado a (simple|doble|triple)\.$/);
+    if (shortcutBond) return `Shortcut ${shortcutBond[1]}: bond to the previous node changed to ${t(shortcutBond[2])}.`;
+
+    const removedNodeReconnect = source.match(/^Nodo (\d+) eliminado con X; sus dos vecinos se reconectaron mediante un enlace simple\.$/);
+    if (removedNodeReconnect) return `Node ${removedNodeReconnect[1]} removed with X; its two neighbors were reconnected with a single bond.`;
+
+    const removedNode = source.match(/^Nodo (\d+) eliminado con X\.$/);
+    if (removedNode) return `Node ${removedNode[1]} removed with X.`;
+
+    const createdFrom = source.match(/^Estructura creada desde «(.+)»\. Puedes seguir editándola átomo por átomo\.$/);
+    if (createdFrom) return `Structure created from “${localizedIupac(createdFrom[1])}”. You can keep editing it atom by atom.`;
+
+    const configuration = source.match(/^Configuración cambiada a (.+): se rotó un lado del doble enlace y el nombre IUPAC se actualizó automáticamente\.$/);
+    if (configuration) return `Configuration changed to ${configuration[1]}: one side of the double bond was rotated and the IUPAC name was updated automatically.`;
+
+    const valenceExisting = source.match(/^No se puede añadir un enlace (simple|doble|triple) en el (Carbono|Oxígeno|Nitrógeno|Flúor|Cloro|Bromo|Yodo) (\d+) porque ya tiene (\d+) enlaces\.$/);
+    if (valenceExisting) return `Cannot add a ${t(valenceExisting[1])} bond to ${t(valenceExisting[2]).toLowerCase()} ${valenceExisting[3]} because it already has ${valenceExisting[4]} bonds.`;
+
+    const valenceAttempt = source.match(/^No se puede añadir un enlace (simple|doble|triple) en el (Carbono|Oxígeno|Nitrógeno|Flúor|Cloro|Bromo|Yodo) (\d+) porque alcanzaría (\d+) enlaces y su máximo es (\d+)\.$/);
+    if (valenceAttempt) return `Cannot add a ${t(valenceAttempt[1])} bond to ${t(valenceAttempt[2]).toLowerCase()} ${valenceAttempt[3]} because it would reach ${valenceAttempt[4]} bonds and its maximum is ${valenceAttempt[5]}.`;
+
+    const blockedValence = source.match(/^Acción bloqueada: el (Carbono|Oxígeno|Nitrógeno|Flúor|Cloro|Bromo|Yodo) (\d+) quedaría con (\d+) enlaces y su máximo es (\d+)\.$/);
+    if (blockedValence) return `Action blocked: ${t(blockedValence[1])} ${blockedValence[2]} would have ${blockedValence[3]} bonds and its maximum is ${blockedValence[4]}.`;
+
+    const functionalValence = source.match(/^No se puede añadir (.+) en el (Carbono|Oxígeno|Nitrógeno|Flúor|Cloro|Bromo|Yodo) (\d+): alcanzaría (\d+) enlaces y su máximo es (\d+)\.$/);
+    if (functionalValence) return `Cannot add ${t(functionalValence[1])} to ${t(functionalValence[2]).toLowerCase()} ${functionalValence[3]}: it would reach ${functionalValence[4]} bonds and its maximum is ${functionalValence[5]}.`;
+
+    const convertValence = source.match(/^No se puede convertir el nodo (\d+) en (.+): conservaría (\d+) enlaces y su máximo es (\d+)\.$/);
+    if (convertValence) return `Node ${convertValence[1]} cannot be converted to ${t(convertValence[2])}: it would keep ${convertValence[3]} bonds and its maximum is ${convertValence[4]}.`;
+
+    const aliasBack = source.match(/^(.+) volvió a mostrarse como \((.+)\) y se recalculó el orden alfabético\.$/);
+    if (aliasBack) return `${localizedCommonAlkylName(aliasBack[1])} is now shown again as (${localizedIupac(aliasBack[2])}), and alphabetical order was recalculated.`;
+
+    const aliasCommon = source.match(/^\((.+)\) ahora se muestra como (.+); el nombre completo se reordenó alfabéticamente\.$/);
+    if (aliasCommon) return `(${localizedIupac(aliasCommon[1])}) is now shown as ${localizedCommonAlkylName(aliasCommon[2])}; the full name was reordered alphabetically.`;
+
+    const ringNameBack = source.match(/^(.+) volvió a mostrarse como (.+)\.$/);
+    if (ringNameBack) return `${localizedIupac(ringNameBack[1])} is now shown again as ${localizedIupac(ringNameBack[2])}.`;
+
+    const ringNameSimple = source.match(/^(.+) ahora se muestra como (.+); en un ciclo con una sola insaturación, el localizador 1 puede omitirse\.$/);
+    if (ringNameSimple) return `${localizedIupac(ringNameSimple[1])} is now shown as ${localizedIupac(ringNameSimple[2])}; in a ring with a single unsaturation, locant 1 may be omitted.`;
+
+    const completeRingExample = source.match(/^(.+) es un ejemplo completo\. Para añadir otro núcleo aromático, elige Benceno\.$/);
+    if (completeRingExample) return `${localizedIupac(completeRingExample[1])} is a complete example. To add another aromatic ring, choose Benzene.`;
+
+    const autoNameBuilder = source.match(/^Lista con ([^:]+): (.+)\. Ya quedó añadida a tu historial automático\.$/);
+    if (autoNameBuilder) {
+      const engine = autoNameBuilder[1]
+        .replace("OpenChemLib y el respaldo integrado", "OpenChemLib and the integrated fallback")
+        .replace("constructor local de respaldo", "local fallback builder");
+      let result = autoNameBuilder[2];
+      const warningText = " OPSIN informó una posible ambigüedad del nombre.";
+      const hasWarning = result.endsWith(warningText);
+      if (hasWarning) result = result.slice(0, -warningText.length);
+      const commonSeparator = "; también se conoce como ";
+      const commonIndex = result.indexOf(commonSeparator);
+      const systematic = commonIndex >= 0 ? result.slice(0, commonIndex) : result;
+      const common = commonIndex >= 0 ? result.slice(commonIndex + commonSeparator.length) : "";
+      const commonText = common ? `; also known as ${translateCommonName("en", common)}` : "";
+      const warning = hasWarning ? " OPSIN reported a possible ambiguity in the name." : "";
+      return `Ready with ${engine}: ${localizedIupac(systematic)}${commonText}.${warning} It has been added to your automatic history.`;
+    }
+
+    const themeManual = source.match(/^Tema (oscuro|claro) fijado manualmente\.$/);
+    if (themeManual) return `${t(themeManual[1])[0].toUpperCase()}${t(themeManual[1]).slice(1)} theme set manually.`;
+
+    return dynamicUiText(language, source);
+  };
+  const localizedDetail = (value: string) => {
+    if (language === "es") return value;
+    const ringMatch = value.match(/^anillo de (\d+) carbonos$/);
+    if (ringMatch) return `ring of ${ringMatch[1]} carbons`;
+    const substituentMatch = value.match(/^un sustituyente (.+)$/);
+    if (substituentMatch) return `one ${localizedIupac(substituentMatch[1])} substituent`;
+    return t(value) !== value ? t(value) : localizedIupac(value);
+  };
   const [molecule, setMolecule] = useState<Molecule>(() =>
     cloneMolecule(PRESETS.find((preset) => preset.label === "2-metilpropano")!.molecule),
   );
@@ -3387,6 +3635,12 @@ export default function Home() {
     ),
     [analysis, commonAlkylNameSelections, molecule, reasoningSourceName],
   );
+  const localizedReasoningSteps = useMemo(
+    () => language === "en"
+      ? buildEnglishReasoningSteps(reasoningSteps, molecule, analysis)
+      : reasoningSteps,
+    [analysis, language, molecule, reasoningSteps],
+  );
   const interactiveNameParts = useMemo(
     () => getInteractiveNameParts(
       visibleStereochemicalName,
@@ -3417,6 +3671,8 @@ export default function Home() {
   );
   const displayedIupacName = interactiveNameParts.map((part) => part.text).join("");
   const canonicalIupacName = canonicalNameParts.map((part) => part.text).join("");
+  const localizedDisplayedIupacName = localizedIupac(displayedIupacName);
+  const localizedCanonicalIupacName = localizedIupac(canonicalIupacName);
   const hasInteractiveAlkylName = interactiveNameParts.some((part) => part.systematic);
   const hasInteractiveRingName = interactiveNameParts.some((part) => part.ringSystematic);
   const isDarkTheme = themePreference === "dark" || (themePreference === "auto" && automaticDark);
@@ -3429,27 +3685,50 @@ export default function Home() {
         : analysis.family === "polycyclic"
           ? "Policíclico"
           : "Hidrocarburo");
+  const localizedHistoryFamilyLabel = t(historyFamilyLabel);
   const filteredHistoryEntries = useMemo(() => {
-    const query = historyQuery.trim().toLocaleLowerCase("es");
+    const query = historyQuery.trim().toLocaleLowerCase(language);
     if (!query) return historyEntries;
-    return historyEntries.filter((item) =>
-      `${item.name} ${item.formula} ${item.family}`
-        .toLocaleLowerCase("es")
-        .includes(query),
-    );
-  }, [historyEntries, historyQuery]);
+    return historyEntries.filter((item) => {
+      const englishName = translateSpanishIupacToOpsin(item.name);
+      const englishFamily = uiText("en", item.family);
+      return `${item.name} ${englishName} ${item.formula} ${item.family} ${englishFamily}`
+        .toLocaleLowerCase(language)
+        .includes(query);
+    });
+  }, [historyEntries, historyQuery, language]);
   const filteredSavedEntries = useMemo(() => {
-    const query = historyQuery.trim().toLocaleLowerCase("es");
+    const query = historyQuery.trim().toLocaleLowerCase(language);
     if (!query) return savedEntries;
-    return savedEntries.filter((item) =>
-      `${item.name} ${item.formula} ${item.family}`
-        .toLocaleLowerCase("es")
-        .includes(query),
-    );
-  }, [historyQuery, savedEntries]);
+    return savedEntries.filter((item) => {
+      const englishName = translateSpanishIupacToOpsin(item.name);
+      const englishFamily = uiText("en", item.family);
+      return `${item.name} ${englishName} ${item.formula} ${item.family} ${englishFamily}`
+        .toLocaleLowerCase(language)
+        .includes(query);
+    });
+  }, [historyQuery, language, savedEntries]);
   const filteredLibraryEntries = librarySection === "history"
     ? filteredHistoryEntries
     : filteredSavedEntries;
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
+    } catch {
+      // The selector still works when browser storage is unavailable.
+    }
+    document.documentElement.lang = language;
+    const metadata = pageMetadata(language);
+    document.title = metadata.title;
+    const description = document.querySelector<HTMLMetaElement>('meta[name="description"]');
+    if (description) description.content = metadata.description;
+
+    const nextPath = languagePath(window.location.pathname, language);
+    if (nextPath !== window.location.pathname) {
+      window.history.replaceState(window.history.state, "", `${nextPath}${window.location.search}${window.location.hash}`);
+    }
+  }, [language]);
 
   useEffect(() => {
     let cancelled = false;
@@ -4668,7 +4947,11 @@ export default function Home() {
 
   const deleteHistoryEntry = async (entry: HistoryEntry) => {
     if (!historyIdentity) return;
-    if (!window.confirm(`¿Eliminar “${entry.name}” de tu historial?`)) return;
+    if (!window.confirm(
+      language === "en"
+        ? `Remove “${localizedIupac(entry.name)}” from your history?`
+        : `¿Eliminar “${entry.name}” de tu historial?`,
+    )) return;
     try {
       if (usesLocalLibrary()) {
         removeLocalLibraryEntry(entry.id, "history");
@@ -4694,7 +4977,9 @@ export default function Home() {
     if (!historyIdentity || !historyEntries.length || historyClearing) return;
     const total = historyEntries.length;
     const confirmed = window.confirm(
-      `¿Borrar las ${total} estructura${total === 1 ? "" : "s"} del historial? Guardados y la estructura actual se conservarán. Esta acción no se puede deshacer.`,
+      language === "en"
+        ? `Clear ${total} ${total === 1 ? "structure" : "structures"} from history? Saved structures and the current structure will be preserved. This action cannot be undone.`
+        : `¿Borrar las ${total} estructura${total === 1 ? "" : "s"} del historial? Guardados y la estructura actual se conservarán. Esta acción no se puede deshacer.`,
     );
     if (!confirmed) return;
 
@@ -4732,7 +5017,11 @@ export default function Home() {
 
   const deleteSavedEntry = async (entry: HistoryEntry) => {
     if (!historyIdentity) return;
-    if (!window.confirm(`¿Eliminar “${entry.name}” de Guardados?`)) return;
+    if (!window.confirm(
+      language === "en"
+        ? `Remove “${localizedIupac(entry.name)}” from Saved?`
+        : `¿Eliminar “${entry.name}” de Guardados?`,
+    )) return;
     try {
       if (usesLocalLibrary()) {
         removeLocalLibraryEntry(entry.id, "saved");
@@ -4871,30 +5160,30 @@ export default function Home() {
   const hasMultipleBonds = analysis.doubleBondLocants.length > 0 || analysis.tripleBondLocants.length > 0;
   const isRingStructure = analysis.family !== "acyclic";
   const carbonFamilyLabel = analysis.family === "aromatic"
-    ? "Aromático"
+    ? t("Aromático")
     : analysis.family === "polycyclic"
-      ? `${molecule.rings?.length ?? 0} anillos`
+      ? `${molecule.rings?.length ?? 0} ${language === "en" ? "rings" : "anillos"}`
     : analysis.family === "cycloalkane"
       ? analysis.doubleBondLocants.length && analysis.tripleBondLocants.length
-        ? "Cicloalquenino"
+        ? t("Cicloalquenino")
         : analysis.doubleBondLocants.length
-          ? "Cicloalqueno"
+          ? t("Cicloalqueno")
           : analysis.tripleBondLocants.length
-            ? "Cicloalquino"
-            : "Cicloalcano"
+            ? t("Cicloalquino")
+            : t("Cicloalcano")
       : hasMultipleBonds
-        ? "Insaturado"
-        : "Alcano";
+        ? t("Insaturado")
+        : t("Alcano");
   const structureFamilyLabel = analysis.primaryFunctionalLabel
-    ? `${analysis.primaryFunctionalLabel} · ${carbonFamilyLabel}`
+    ? `${t(analysis.primaryFunctionalLabel)} · ${carbonFamilyLabel}`
     : analysis.functionalGroups.length
-      ? `${analysis.functionalGroups[0].label} · ${carbonFamilyLabel}`
+      ? `${t(analysis.functionalGroups[0].label)} · ${carbonFamilyLabel}`
       : carbonFamilyLabel;
   const themeModeLabel = themePreference === "auto"
-    ? `Auto · ${isDarkTheme ? "oscuro" : "claro"}`
+    ? `Auto · ${isDarkTheme ? t("oscuro") : t("claro")}`
     : themePreference === "dark"
-      ? "Oscuro"
-      : "Claro";
+      ? t("Oscuro")
+      : t("Claro");
 
   return (
     <main className="app-shell" onPointerDownCapture={dismissValenceAlert}>
@@ -4905,8 +5194,8 @@ export default function Home() {
           <span>O</span>
         </div>
         <div className="brand-copy">
-          <p>Laboratorio interactivo</p>
-          <h1>Constructor de química orgánica</h1>
+          <p>{t("Laboratorio interactivo")}</p>
+          <h1>{t("Laboratorio de Hidrocarburos")}</h1>
         </div>
         <div className="header-actions">
           <button
@@ -4916,13 +5205,13 @@ export default function Home() {
               setHistoryQuery("");
               setHistoryOpen(true);
             }}
-            aria-label={`Abrir mi historial. ${historyEntries.length} versiones recientes`}
+            aria-label={language === "en" ? `Open my history. ${historyEntries.length} recent versions` : `Abrir mi historial. ${historyEntries.length} versiones recientes`}
             aria-haspopup="dialog"
           >
             <span className="personal-history-icon" aria-hidden="true">↺</span>
             <span className="personal-history-copy">
-              Historial
-              <small>{historySyncState === "saving" ? "Guardando…" : "Siempre disponible"}</small>
+              {t("Historial")}
+              <small>{historySyncState === "saving" ? t("Guardando…") : t("Siempre disponible")}</small>
             </span>
             <strong>{historyEntries.length}</strong>
           </button>
@@ -4933,28 +5222,48 @@ export default function Home() {
               setHistoryQuery("");
               setHistoryOpen(true);
             }}
-            aria-label={`Abrir Guardados. ${savedEntries.length} estructuras elegidas`}
+            aria-label={language === "en" ? `Open Saved. ${savedEntries.length} selected structures` : `Abrir Guardados. ${savedEntries.length} estructuras elegidas`}
             aria-haspopup="dialog"
           >
             <span className="personal-history-icon" aria-hidden="true">★</span>
             <span className="personal-history-copy">
-              Guardados
-              <small>Elegidos por ti</small>
+              {t("Guardados")}
+              <small>{t("Elegidos por ti")}</small>
             </span>
             <strong>{savedEntries.length}</strong>
           </button>
+          <div className="language-switch" role="group" aria-label={language === "en" ? "Language" : "Idioma"}>
+            <button
+              type="button"
+              className={language === "es" ? "active" : ""}
+              aria-pressed={language === "es"}
+              onClick={() => setLanguage("es")}
+              title="Español"
+            >
+              ES
+            </button>
+            <button
+              type="button"
+              className={language === "en" ? "active" : ""}
+              aria-pressed={language === "en"}
+              onClick={() => setLanguage("en")}
+              title="English"
+            >
+              EN
+            </button>
+          </div>
           <button
             className="theme-control"
             onClick={cycleTheme}
-            aria-label={`Tema ${themeModeLabel}. Cambiar modo de color`}
-            title="Alternar entre automático, claro y oscuro"
+            aria-label={language === "en" ? `Theme ${themeModeLabel}. Change color mode` : `Tema ${themeModeLabel}. Cambiar modo de color`}
+            title={t("Alternar entre automático, claro y oscuro")}
           >
             <span className="theme-icon" aria-hidden="true">{isDarkTheme ? "☾" : "☀"}</span>
-            <span>Tema <strong>{themeModeLabel}</strong></span>
+            <span>{t("Tema")} <strong>{themeModeLabel}</strong></span>
           </button>
           <div className="scope-pill">
             <span className="status-dot" />
-            Hidrocarburos · grupos funcionales
+            {t("Hidrocarburos · grupos funcionales")}
           </div>
         </div>
       </header>
@@ -4964,7 +5273,7 @@ export default function Home() {
           <button
             className="history-scrim"
             onClick={() => setHistoryOpen(false)}
-            aria-label="Cerrar historial"
+            aria-label={t("Cerrar historial")}
           />
           <aside
             className="history-drawer"
@@ -4974,19 +5283,19 @@ export default function Home() {
           >
             <div className="history-drawer-heading">
               <div>
-                <p className="eyebrow">Biblioteca personal</p>
-                <h2 id="history-title">Mi laboratorio químico</h2>
+                <p className="eyebrow">{t("Biblioteca personal")}</p>
+                <h2 id="history-title">{t("Mi laboratorio químico")}</h2>
               </div>
               <button
                 className="history-close"
                 onClick={() => setHistoryOpen(false)}
-                aria-label="Cerrar historial"
+                aria-label={t("Cerrar historial")}
               >
                 ×
               </button>
             </div>
 
-            <div className="library-tabs" role="tablist" aria-label="Secciones de mi laboratorio">
+            <div className="library-tabs" role="tablist" aria-label={t("Secciones de mi laboratorio")}>
               <button
                 className={librarySection === "history" ? "active" : ""}
                 onClick={() => {
@@ -4998,7 +5307,7 @@ export default function Home() {
                 aria-selected={librarySection === "history"}
               >
                 <span aria-hidden="true">↺</span>
-                <span>Historial<small>Automático</small></span>
+                <span>{t("Historial")}<small>{t("Automático")}</small></span>
                 <strong>{historyEntries.length}</strong>
               </button>
               <button
@@ -5012,58 +5321,58 @@ export default function Home() {
                 aria-selected={librarySection === "saved"}
               >
                 <span aria-hidden="true">★</span>
-                <span>Guardados<small>Elegidos por ti</small></span>
+                <span>{t("Guardados")}<small>{t("Elegidos por ti")}</small></span>
                 <strong>{savedEntries.length}</strong>
               </button>
             </div>
 
             {librarySection === "history" ? (
-              <div className="history-transfer-toolbar" aria-label="Exportar o borrar el historial químico">
+              <div className="history-transfer-toolbar" aria-label={t("Exportar o borrar el historial químico")}>
                 <button
                   onClick={exportHistoryLibrary}
                   disabled={!historyEntries.length || historyClearing}
                   title={historyEntries.length
-                    ? "Descargar el historial en un único documento"
-                    : "El historial todavía no contiene estructuras"}
+                    ? t("Descargar el historial en un único documento")
+                    : t("El historial todavía no contiene estructuras")}
                 >
                   <span aria-hidden="true">↓</span>
-                  Exportar historial
+                  {t("Exportar historial")}
                 </button>
                 <button
                   className="history-clear-all"
                   onClick={clearHistory}
                   disabled={!historyEntries.length || historyClearing || historySyncState === "saving"}
                   title={historyEntries.length
-                    ? "Borrar únicamente el historial; Guardados se conservará"
-                    : "El historial ya está vacío"}
-                  aria-label="Borrar todo mi historial sin eliminar Guardados"
+                    ? t("Borrar únicamente el historial; Guardados se conservará")
+                    : t("El historial ya está vacío")}
+                  aria-label={t("Borrar todo mi historial sin eliminar Guardados")}
                 >
                   <span aria-hidden="true">⌫</span>
-                  {historyClearing ? "Borrando…" : "Borrar historial"}
+                  {historyClearing ? t("Borrando…") : t("Borrar historial")}
                 </button>
               </div>
             ) : (
-              <div className="history-transfer-toolbar" aria-label="Importar y exportar estructuras guardadas">
+              <div className="history-transfer-toolbar" aria-label={t("Importar y exportar estructuras guardadas")}>
                 <label className={historyImporting || !historyIdentity ? "disabled" : ""}>
                   <span aria-hidden="true">↑</span>
-                  {historyImporting ? "Importando…" : "Importar .quimica"}
+                  {historyImporting ? t("Importando…") : t("Importar .quimica")}
                   <input
                     type="file"
                     accept=".quimica,.json,application/json"
                     onChange={importChemistryDocument}
                     disabled={historyImporting || !historyIdentity}
-                    aria-label="Importar documento químico a Guardados"
+                    aria-label={t("Importar documento químico a Guardados")}
                   />
                 </label>
                 <button
                   onClick={exportSavedLibrary}
                   disabled={!savedEntries.length}
                   title={savedEntries.length
-                    ? "Descargar todas las estructuras guardadas en un único documento"
-                    : "Añade una estructura a Guardados antes de exportar"}
+                    ? t("Descargar todas las estructuras guardadas en un único documento")
+                    : t("Añade una estructura a Guardados antes de exportar")}
                 >
                   <span aria-hidden="true">↓</span>
-                  Exportar guardados
+                  {t("Exportar guardados")}
                 </button>
               </div>
             )}
@@ -5071,10 +5380,10 @@ export default function Home() {
             {historyTransferNotice && (
               <div className={`history-transfer-notice transfer-${historyTransferNotice.kind}`} role="status">
                 <span aria-hidden="true">{historyTransferNotice.kind === "success" ? "✓" : "!"}</span>
-                <p>{historyTransferNotice.message}</p>
+                <p>{localizedDynamicText(historyTransferNotice.message)}</p>
                 <button
                   onClick={() => setHistoryTransferNotice(null)}
-                  aria-label="Cerrar aviso de archivo"
+                  aria-label={t("Cerrar aviso de archivo")}
                 >
                   ×
                 </button>
@@ -5085,23 +5394,23 @@ export default function Home() {
               <div className="history-current-card">
                 <MoleculeHistoryPreview molecule={molecule} />
                 <div>
-                  <span>Estructura actual</span>
-                  <strong>{canonicalIupacName}</strong>
-                  <small>{analysis.formula} · {historyFamilyLabel}</small>
+                  <span>{t("Estructura actual")}</span>
+                  <strong>{localizedCanonicalIupacName}</strong>
+                  <small>{analysis.formula} · {localizedHistoryFamilyLabel}</small>
                 </div>
                 <button onClick={saveCurrentStructure} disabled={!historyIdentity || savedBusy}>
-                  {savedBusy ? "Guardando…" : "Añadir a Guardados"}
+                  {savedBusy ? t("Guardando…") : t("Añadir a Guardados")}
                 </button>
               </div>
             ) : (
               <div className={`history-sync history-sync-${historySyncState}`} role="status">
                 <span aria-hidden="true" />
                 <div>
-                  <strong>{historyMessage}</strong>
+                  <strong>{localizedDynamicText(historyMessage)}</strong>
                   <small>
                     {historyScope === "account"
-                      ? "El historial se recupera cuando vuelves con la misma cuenta."
-                      : "El historial se recupera cuando vuelves desde este navegador."}
+                      ? t("El historial se recupera cuando vuelves con la misma cuenta.")
+                      : t("El historial se recupera cuando vuelves desde este navegador.")}
                   </small>
                 </div>
               </div>
@@ -5113,21 +5422,21 @@ export default function Home() {
                 type="search"
                 value={historyQuery}
                 onChange={(event) => setHistoryQuery(event.target.value)}
-                placeholder={`Buscar en ${librarySection === "history" ? "el historial" : "Guardados"}`}
-                aria-label={`Buscar en ${librarySection === "history" ? "mi historial" : "Guardados"}`}
+                placeholder={language === "en" ? `Search ${librarySection === "history" ? "history" : "Saved"}` : `Buscar en ${librarySection === "history" ? "el historial" : "Guardados"}`}
+                aria-label={language === "en" ? `Search ${librarySection === "history" ? "my history" : "Saved"}` : `Buscar en ${librarySection === "history" ? "mi historial" : "Guardados"}`}
               />
               {historyQuery && (
-                <button onClick={() => setHistoryQuery("")} aria-label="Limpiar búsqueda">×</button>
+                <button onClick={() => setHistoryQuery("")} aria-label={t("Limpiar búsqueda")}>×</button>
               )}
             </label>
 
             <div className="history-list-heading">
               <div>
-                <strong>{librarySection === "history" ? "Versiones recientes" : "Estructuras guardadas"}</strong>
+                <strong>{librarySection === "history" ? t("Versiones recientes") : t("Estructuras guardadas")}</strong>
                 <small>
                   {librarySection === "history"
-                    ? "Se guarda una versión única después de cada pausa."
-                    : "Esta sección solo contiene lo que decides conservar."}
+                    ? t("Se guarda una versión única después de cada pausa.")
+                    : t("Esta sección solo contiene lo que decides conservar.")}
                 </small>
               </div>
               <span>{filteredLibraryEntries.length}</span>
@@ -5137,7 +5446,7 @@ export default function Home() {
               {historySyncState === "loading" ? (
                 <div className="history-empty">
                   <span className="history-loader" aria-hidden="true" />
-                  <strong>Cargando tus estructuras…</strong>
+                  <strong>{t("Cargando tus estructuras…")}</strong>
                 </div>
               ) : filteredLibraryEntries.length ? (
                 filteredLibraryEntries.map((entry) => (
@@ -5145,21 +5454,21 @@ export default function Home() {
                     <button
                       className="history-item-open"
                       onClick={() => restoreLibraryEntry(entry, librarySection)}
-                      aria-label={`Abrir ${entry.name}`}
+                      aria-label={language === "en" ? `Open ${localizedIupac(entry.name)}` : `Abrir ${entry.name}`}
                     >
                       <MoleculeHistoryPreview molecule={entry.molecule} />
                       <span className="history-item-copy">
-                        <strong>{entry.name}</strong>
-                        <span>{entry.formula} · {entry.family}</span>
-                        <small>{formatHistoryDate(entry.updatedAt)} · {entry.atomCount} átomos</small>
+                        <strong>{localizedIupac(entry.name)}</strong>
+                        <span>{entry.formula} · {language === "en" ? t(entry.family) : entry.family}</span>
+                        <small>{formatHistoryDate(entry.updatedAt, language)} · {entry.atomCount} {entry.atomCount === 1 ? t("átomo") : t("átomos")}</small>
                       </span>
                     </button>
                     <div className="history-item-actions">
                       <button
                         className="history-download"
                         onClick={() => exportHistoryEntry(entry)}
-                        aria-label={`Descargar ${entry.name} como documento químico`}
-                        title="Descargar archivo .quimica"
+                        aria-label={language === "en" ? `Download ${localizedIupac(entry.name)} as a chemistry document` : `Descargar ${entry.name} como documento químico`}
+                        title={language === "en" ? "Download .quimica file" : "Descargar archivo .quimica"}
                       >
                         ↓
                       </button>
@@ -5168,8 +5477,8 @@ export default function Home() {
                         onClick={() => librarySection === "history"
                           ? deleteHistoryEntry(entry)
                           : deleteSavedEntry(entry)}
-                        aria-label={`Eliminar ${entry.name} de ${librarySection === "history" ? "mi historial" : "Guardados"}`}
-                        title={librarySection === "history" ? "Eliminar del historial" : "Eliminar de Guardados"}
+                        aria-label={language === "en" ? `Remove ${localizedIupac(entry.name)} from ${librarySection === "history" ? "my history" : "Saved"}` : `Eliminar ${entry.name} de ${librarySection === "history" ? "mi historial" : "Guardados"}`}
+                        title={librarySection === "history" ? t("Eliminar del historial") : t("Eliminar de Guardados")}
                       >
                         ×
                       </button>
@@ -5181,17 +5490,17 @@ export default function Home() {
                   <span aria-hidden="true">⌬</span>
                   <strong>
                     {historyQuery
-                      ? "No encontramos coincidencias"
+                      ? (language === "en" ? "No matches found" : "No encontramos coincidencias")
                       : librarySection === "history"
-                        ? "Tu historial comienza aquí"
-                        : "Todavía no tienes estructuras guardadas"}
+                        ? t("Tu historial comienza aquí")
+                        : t("Todavía no tienes estructuras guardadas")}
                   </strong>
                   <p>
                     {historyQuery
-                      ? "Prueba con el nombre IUPAC, la fórmula o la familia del compuesto."
+                      ? t("Prueba con el nombre IUPAC, la fórmula o la familia del compuesto.")
                       : librarySection === "history"
-                        ? "Construye una molécula y aparecerán aquí sus versiones recientes."
-                        : "Añade la estructura actual o importa un archivo .quimica para conservarlo aparte del historial."}
+                        ? t("Construye una molécula y aparecerán aquí sus versiones recientes.")
+                        : t("Añade la estructura actual o importa un archivo .quimica para conservarlo aparte del historial.")}
                   </p>
                 </div>
               )}
@@ -5199,26 +5508,26 @@ export default function Home() {
 
             <p className="history-privacy-note">
               <span aria-hidden="true">✓</span>
-              Historial y Guardados permanecen separados y cada visitante ve únicamente sus propias estructuras.
+              {t("Historial y Guardados permanecen separados y cada visitante ve únicamente sus propias estructuras.")}
             </p>
           </aside>
         </div>
       )}
 
-      <section className="intro-strip" aria-label="Instrucciones breves">
+      <section className="intro-strip" aria-label={t("Instrucciones breves")}>
         <div>
           <span className="step-number">1</span>
-          <p><strong>Selecciona</strong> un carbono</p>
+          <p><strong>{t("Selecciona")}</strong> {t("un carbono")}</p>
         </div>
         <div className="step-line" />
         <div>
           <span className="step-number">2</span>
-          <p><strong>Añade</strong> C, enlaces y grupos funcionales</p>
+          <p><strong>{t("Añade")}</strong> {t("C, enlaces y grupos funcionales")}</p>
         </div>
         <div className="step-line" />
         <div>
           <span className="step-number">3</span>
-          <p><strong>Analiza</strong> el nombre IUPAC</p>
+          <p><strong>{t("Analiza")}</strong> {t("el nombre IUPAC")}</p>
         </div>
       </section>
 
@@ -5226,8 +5535,8 @@ export default function Home() {
         <section className="builder-card">
           <div className="card-heading">
             <div>
-              <p className="eyebrow">Estructura molecular</p>
-              <h2>Construye la estructura orgánica</h2>
+              <p className="eyebrow">{t("Estructura molecular")}</p>
+              <h2>{t("Construye la estructura orgánica")}</h2>
             </div>
             <div className="heading-actions">
               <button
@@ -5240,32 +5549,32 @@ export default function Home() {
                 aria-controls="iupac-name-builder"
               >
                 <span aria-hidden="true">Aa</span>
-                Por nombre
+                {t("Por nombre")}
               </button>
-              <div className="view-mode-switch" role="group" aria-label="Tipo de representación molecular">
+              <div className="view-mode-switch" role="group" aria-label={t("Tipo de representación molecular")}>
                 <button
                   className={viewMode === "condensed" ? "active" : ""}
                   onClick={() => changeViewMode("condensed")}
                   aria-pressed={viewMode === "condensed"}
-                  title="Vista semidesarrollada"
+                  title={t("Vista semidesarrollada")}
                 >
                   <span className="condensed-icon" aria-hidden="true">CH₃</span>
-                  <span className="mode-label">Semides.</span>
+                  <span className="mode-label">{t("Semides.")}</span>
                 </button>
                 <button
                   className={viewMode === "skeletal" ? "active" : ""}
                   onClick={() => changeViewMode("skeletal")}
                   aria-pressed={viewMode === "skeletal"}
-                  title="Vista esquelética o de líneas"
+                  title={t("Vista esquelética o de líneas")}
                 >
                   <span className="line-angle-icon" aria-hidden="true"><i /><i /></span>
-                  <span className="mode-label">Esquelética</span>
+                  <span className="mode-label">{t("Esquelética")}</span>
                 </button>
               </div>
-              <div className="history-controls" aria-label="Historial de cambios">
-                <button onClick={undo} disabled={!undoStack.length} title="Deshacer">↶</button>
-                <button onClick={redo} disabled={!future.length} title="Rehacer">↷</button>
-                <button className="new-button" onClick={newMolecule}>Nueva</button>
+              <div className="history-controls" aria-label={t("Historial de cambios")}>
+                <button onClick={undo} disabled={!undoStack.length} title={t("Deshacer")}>↶</button>
+                <button onClick={redo} disabled={!future.length} title={t("Rehacer")}>↷</button>
+                <button className="new-button" onClick={newMolecule}>{t("Nueva")}</button>
               </div>
             </div>
           </div>
@@ -5279,14 +5588,14 @@ export default function Home() {
               <div className="name-builder-intro">
                 <span className="name-builder-mark" aria-hidden="true">Aa</span>
                 <div>
-                  <strong>Construir por nombre IUPAC</strong>
-                  <small>OPSIN interpreta el nombre y OpenChemLib crea el objeto molecular que se dibuja en el canvas.</small>
+                  <strong>{t("Construir por nombre IUPAC")}</strong>
+                  <small>{t("OPSIN interpreta el nombre y OpenChemLib crea el objeto molecular que se dibuja en el canvas.")}</small>
                 </div>
-                <span className="name-builder-scope">Motor químico avanzado</span>
+                <span className="name-builder-scope">{t("Motor químico avanzado")}</span>
               </div>
 
               <div className="name-builder-field-row">
-                <label htmlFor="iupac-name-input">Nombre del compuesto</label>
+                <label htmlFor="iupac-name-input">{t("Nombre del compuesto")}</label>
                 <div className="name-builder-input-group">
                   <input
                     id="iupac-name-input"
@@ -5296,14 +5605,14 @@ export default function Home() {
                       setIupacInput(event.target.value);
                       setNameBuilderFeedback(null);
                     }}
-                    placeholder="Ej.: ácido 2-metilpropanoico"
+                    placeholder={language === "en" ? "E.g., 2-methylpropanoic acid" : "Ej.: ácido 2-metilpropanoico"}
                     autoComplete="off"
                     spellCheck={false}
                     disabled={nameBuilderBusy}
                     aria-describedby="name-builder-help"
                   />
                   <button type="submit" disabled={nameBuilderBusy} aria-busy={nameBuilderBusy}>
-                    {nameBuilderBusy ? "Interpretando…" : "Crear estructura"}
+                    {nameBuilderBusy ? t("Interpretando…") : t("Crear estructura")}
                     <span className={nameBuilderBusy ? "name-builder-spinner" : ""} aria-hidden="true">
                       {nameBuilderBusy ? "" : "→"}
                     </span>
@@ -5312,8 +5621,8 @@ export default function Home() {
               </div>
 
               <div className="name-builder-footer" id="name-builder-help">
-                <div className="name-builder-examples" aria-label="Ejemplos de nombres compatibles">
-                  <span>Prueba:</span>
+                <div className="name-builder-examples" aria-label={t("Ejemplos de nombres compatibles")}>
+                  <span>{t("Prueba:")}</span>
                   {[
                     "benceno-1,3,5-triol",
                     "butan-2-ona",
@@ -5326,15 +5635,15 @@ export default function Home() {
                       key={example}
                       disabled={nameBuilderBusy}
                       onClick={() => {
-                        setIupacInput(example);
+                        setIupacInput(language === "en" ? localizedIupac(example) : example);
                         setNameBuilderFeedback(null);
                       }}
                     >
-                      {example}
+                      {localizedIupac(example)}
                     </button>
                   ))}
                 </div>
-                <small>Admite grupos funcionales, sustituyentes entre paréntesis y descriptores estereoquímicos E/Z.</small>
+                <small>{t("Admite grupos funcionales, sustituyentes entre paréntesis y descriptores estereoquímicos E/Z.")}</small>
               </div>
 
               {nameBuilderFeedback && (
@@ -5343,7 +5652,7 @@ export default function Home() {
                   role={nameBuilderFeedback.kind === "error" ? "alert" : "status"}
                 >
                   <span aria-hidden="true">{nameBuilderFeedback.kind === "success" ? "✓" : "!"}</span>
-                  <p>{nameBuilderFeedback.message}</p>
+                  <p>{localizedDynamicText(nameBuilderFeedback.message)}</p>
                 </div>
               )}
             </form>
@@ -5353,14 +5662,16 @@ export default function Home() {
             className={`molecule-stage ${viewMode === "skeletal" ? "skeletal-view" : "condensed-view"} ${highlightSubstituents ? "" : "uniform-colors"}`}
             tabIndex={0}
             role="group"
-            aria-label="Canvas molecular interactivo"
+            aria-label={t("Canvas molecular interactivo")}
             aria-describedby="canvas-keyboard-shortcuts"
             onKeyDown={handleCanvasKeyDown}
             onPointerDown={(event) => event.currentTarget.focus({ preventScroll: true })}
           >
             <svg
               role="img"
-              aria-label={`${viewMode === "skeletal" ? "Representación esquelética" : "Representación semidesarrollada"} ${showIupacName ? `de ${displayedIupacName}` : "de la molécula construida"}`}
+              aria-label={language === "en"
+                ? `${viewMode === "skeletal" ? "Skeletal representation" : "Condensed structural representation"} ${showIupacName ? `of ${localizedDisplayedIupacName}` : "of the constructed molecule"}`
+                : `${viewMode === "skeletal" ? "Representación esquelética" : "Representación semidesarrollada"} ${showIupacName ? `de ${displayedIupacName}` : "de la molécula construida"}`}
               viewBox={`${viewCenterX - viewWidth / 2} ${viewCenterY - viewHeight / 2} ${viewWidth} ${viewHeight}`}
             >
               <defs>
@@ -5490,10 +5801,16 @@ export default function Home() {
                     role="button"
                     tabIndex={0}
                     aria-label={lockedBond
-                      ? `Enlace ${getBondOrderLabel(order)} fijado para conservar ${isFunctionalBond ? "el grupo funcional" : "la estructura cíclica"}`
+                      ? language === "en"
+                        ? `${t(getBondOrderLabel(order))} bond locked to preserve ${isFunctionalBond ? "the functional group" : "the ring structure"}`
+                        : `Enlace ${getBondOrderLabel(order)} fijado para conservar ${isFunctionalBond ? "el grupo funcional" : "la estructura cíclica"}`
                       : stereoToggleAvailable
-                        ? `Doble enlace estereogénico ${currentStereoLabel}. Activar para cambiar a ${stereoLocant ?? ""}${nextStereoLabel}`
-                        : `Enlace ${getBondOrderLabel(order)}. Activar para cambiar a ${getBondOrderLabel(order === 3 ? 1 : (order + 1) as BondOrder)}`}
+                        ? language === "en"
+                          ? `Stereogenic double bond ${currentStereoLabel}. Activate to change to ${stereoLocant ?? ""}${nextStereoLabel}`
+                          : `Doble enlace estereogénico ${currentStereoLabel}. Activar para cambiar a ${stereoLocant ?? ""}${nextStereoLabel}`
+                        : language === "en"
+                          ? `${t(getBondOrderLabel(order))} bond. Activate to change to ${t(getBondOrderLabel(order === 3 ? 1 : (order + 1) as BondOrder))}`
+                          : `Enlace ${getBondOrderLabel(order)}. Activar para cambiar a ${getBondOrderLabel(order === 3 ? 1 : (order + 1) as BondOrder)}`}
                   >
                     <line
                       className="bond-hit-target"
@@ -5563,7 +5880,7 @@ export default function Home() {
                     }}
                     role="button"
                     tabIndex={0}
-                    aria-label={`Seleccionar ${elementNames[element]} ${chainNumber ?? atom.id}`}
+                    aria-label={language === "en" ? `Select ${t(elementNames[element])} ${chainNumber ?? atom.id}` : `Seleccionar ${elementNames[element]} ${chainNumber ?? atom.id}`}
                     onKeyDown={(event) => {
                       if (event.key === "Enter" || event.key === " ") {
                         previousSelectedId.current = selectedAtom.id;
@@ -5631,25 +5948,25 @@ export default function Home() {
 
             <div className="bond-touch-hint" aria-hidden="true">
               <span>↻</span>
-              <strong>Toca un enlace</strong>
-              <small>orden de enlace · E ↔ Z en C=C</small>
+              <strong>{t("Toca un enlace")}</strong>
+              <small>{t("orden de enlace · E ↔ Z en C=C")}</small>
             </div>
 
             {viewMode === "skeletal" && (
               <div className="skeletal-hint">
                 <span aria-hidden="true"><i /><i /></span>
-                Cada extremo y vértice representa un C; los H están implícitos.
+                {t("Cada extremo y vértice representa un C; los H están implícitos.")}
               </div>
             )}
 
-            <div className="stage-legend" aria-label="Leyenda">
+            <div className="stage-legend" aria-label={t("Leyenda")}>
               {highlightSubstituents ? (
                 <>
-                  <span><i className="main-key" /> {isRingStructure ? "Anillo principal" : "Cadena principal"}</span>
-                  <span><i className="branch-key" /> Sustituyente</span>
+                  <span><i className="main-key" /> {isRingStructure ? t("Anillo principal") : t("Cadena principal")}</span>
+                  <span><i className="branch-key" /> {t("Sustituyente")}</span>
                 </>
               ) : (
-                <span><i className="main-key" /> Estructura uniforme</span>
+                <span><i className="main-key" /> {t("Estructura uniforme")}</span>
               )}
             </div>
           </div>
@@ -5657,30 +5974,30 @@ export default function Home() {
           {valenceAlert && (
             <div className="valence-alert" role="alert" aria-live="assertive">
               <span aria-hidden="true">!</span>
-              <p>{valenceAlert}</p>
+              <p>{localizedDynamicText(valenceAlert)}</p>
             </div>
           )}
 
           <div className="canvas-keyboard-shortcuts" id="canvas-keyboard-shortcuts">
-            <strong>Atajos del canvas</strong>
-            <span><kbd>←</kbd><kbd>→</kbd> mover/crear</span>
-            <span><kbd>↑</kbd><kbd>↓</kbd> rama</span>
-            <span><kbd>C</kbd><kbd>O</kbd><kbd>N</kbd><kbd>B</kbd><kbd>F</kbd> átomo</span>
-            <span><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> enlace</span>
-            <span><kbd>X</kbd> borrar</span>
+            <strong>{t("Atajos del canvas")}</strong>
+            <span><kbd>←</kbd><kbd>→</kbd> {t("mover/crear")}</span>
+            <span><kbd>↑</kbd><kbd>↓</kbd> {t("rama")}</span>
+            <span><kbd>C</kbd><kbd>O</kbd><kbd>N</kbd><kbd>B</kbd><kbd>F</kbd> {t("átomo")}</span>
+            <span><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> {t("enlace")}</span>
+            <span><kbd>X</kbd> {t("borrar")}</span>
           </div>
 
           <div className="builder-toolbar">
             <div className="selection-summary">
               <span className={`selection-icon selection-${selectedElement.toLowerCase()}`}>{selectedElement}</span>
               <div>
-                <p>{elementNames[selectedElement][0].toUpperCase() + elementNames[selectedElement].slice(1)} seleccionado</p>
-                <strong>{selectedHydrogens} H implícito{selectedHydrogens === 1 ? "" : "s"} · valencia {selectedValence}/{selectedValenceLimit}</strong>
+                <p>{language === "en" ? `${t(elementNames[selectedElement])} ${t("seleccionado")}` : `${elementNames[selectedElement][0].toUpperCase() + elementNames[selectedElement].slice(1)} seleccionado`}</p>
+                <strong>{selectedHydrogens} {selectedHydrogens === 1 ? t("H implícito") : t("H implícitos")} · {t("valencia")} {selectedValence}/{selectedValenceLimit}</strong>
               </div>
             </div>
 
-            <div className="bond-order-picker" role="group" aria-label="Orden del próximo enlace">
-              <span>Próximo enlace</span>
+            <div className="bond-order-picker" role="group" aria-label={t("Orden del próximo enlace")}>
+              <span>{t("Próximo enlace")}</span>
               <div>
                 {([1, 2, 3] as BondOrder[]).map((order) => (
                   <button
@@ -5693,24 +6010,24 @@ export default function Home() {
                       );
                     }}
                     aria-pressed={newBondOrder === order}
-                    title={`Crear enlace ${getBondOrderLabel(order)}`}
+                    title={`${t("Crear enlace")} ${t(getBondOrderLabel(order))}`}
                   >
                     <span aria-hidden="true">{order === 1 ? "C–C" : order === 2 ? "C=C" : "C≡C"}</span>
-                    <small>{getBondOrderLabel(order)}</small>
+                    <small>{t(getBondOrderLabel(order))}</small>
                   </button>
                 ))}
               </div>
             </div>
 
-            <div className="direction-pad" aria-label="Añadir carbono">
-              <span className="pad-label">Añadir C</span>
+            <div className="direction-pad" aria-label={t("Añadir carbono")}>
+              <span className="pad-label">{t("Añadir C")}</span>
               {directionOptions.map((option) => (
                 <button
                   key={option.label}
                   className={option.className}
                   onClick={() => addCarbon(option.dx, option.dy)}
-                  aria-label={`Añadir carbono hacia ${option.label.toLowerCase()}`}
-                  title={`Añadir hacia ${option.label.toLowerCase()}`}
+                  aria-label={language === "en" ? `Add carbon ${t(option.label).toLowerCase()}` : `Añadir carbono hacia ${option.label.toLowerCase()}`}
+                  title={language === "en" ? `Add ${t(option.label).toLowerCase()}` : `Añadir hacia ${option.label.toLowerCase()}`}
                 >
                   {option.symbol}
                 </button>
@@ -5732,7 +6049,7 @@ export default function Home() {
                 aria-controls="alkyl-palette"
               >
                 <span>+</span>
-                Grupos alquilo
+                {t("Grupos alquilo")}
               </button>
               <button
                 className={`ring-button ${showRingPalette ? "active" : ""}`}
@@ -5749,7 +6066,7 @@ export default function Home() {
                 aria-controls="ring-palette"
               >
                 <span aria-hidden="true">⬡</span>
-                Anillos
+                {t("Anillos")}
               </button>
               <button
                 className={`functional-button ${showFunctionalPalette ? "active" : ""}`}
@@ -5765,11 +6082,11 @@ export default function Home() {
                 aria-controls="functional-palette"
               >
                 <span aria-hidden="true">OH</span>
-                Grupos funcionales
+                {t("Grupos funcionales")}
               </button>
               <button className="remove-button" onClick={removeSelected}>
                 <span>−</span>
-                Retirar terminal
+                {t("Retirar terminal")}
               </button>
             </div>
           </div>
@@ -5778,10 +6095,10 @@ export default function Home() {
             <div className="alkyl-palette" id="alkyl-palette">
               <div className="alkyl-palette-heading">
                 <div>
-                  <strong>Añadir al carbono seleccionado</strong>
-                  <p>Elige un grupo completo; se colocará automáticamente en un espacio libre.</p>
+                  <strong>{t("Añadir al carbono seleccionado")}</strong>
+                  <p>{t("Elige un grupo completo; se colocará automáticamente en un espacio libre.")}</p>
                 </div>
-                <button onClick={() => setShowAlkylPalette(false)} aria-label="Cerrar grupos alquilo">×</button>
+                <button onClick={() => setShowAlkylPalette(false)} aria-label={t("Cerrar grupos alquilo")}>×</button>
               </div>
               <div className="alkyl-grid">
                 {ALKYL_TEMPLATES.map((template) => (
@@ -5789,19 +6106,17 @@ export default function Home() {
                     key={template.id}
                     className="alkyl-option"
                     onClick={() => addAlkylGroup(template)}
-                    title={`Añadir ${template.label.toLowerCase()}: ${template.systematic}`}
+                    title={language === "en" ? `Add ${localizedCommonAlkylName(template.label).toLowerCase()}: ${localizedIupac(template.systematic)}` : `Añadir ${template.label.toLowerCase()}: ${template.systematic}`}
                   >
                     <span className="alkyl-formula">{template.formula}</span>
                     <span className="alkyl-copy">
-                      <strong>{template.label}</strong>
-                      <small>{template.systematic}</small>
+                      <strong>{localizedCommonAlkylName(template.label)}</strong>
+                      <small>{localizedIupac(template.systematic)}</small>
                     </span>
                   </button>
                 ))}
               </div>
-              <p className="alkyl-note">
-                Al buscar la cadena más larga, parte del grupo añadido puede convertirse en cadena principal.
-              </p>
+              <p className="alkyl-note">{t("Al buscar la cadena más larga, parte del grupo añadido puede convertirse en cadena principal.")}</p>
             </div>
           )}
 
@@ -5809,46 +6124,48 @@ export default function Home() {
             <div className="alkyl-palette ring-palette" id="ring-palette">
               <div className="alkyl-palette-heading">
                 <div>
-                  <strong>Biblioteca de anillos</strong>
+                  <strong>{t("Biblioteca de anillos")}</strong>
                   <p>
                     {ringInsertMode === "attach"
-                      ? "El nuevo anillo se unirá mediante un enlace simple al carbono seleccionado."
-                      : "El anillo elegido reemplazará la estructura actual y comenzará una molécula nueva."}
+                      ? t("El nuevo anillo se unirá mediante un enlace simple al carbono seleccionado.")
+                      : t("El anillo elegido reemplazará la estructura actual y comenzará una molécula nueva.")}
                   </p>
                 </div>
-                <button onClick={() => setShowRingPalette(false)} aria-label="Cerrar biblioteca de anillos">×</button>
+                <button onClick={() => setShowRingPalette(false)} aria-label={t("Cerrar biblioteca de anillos")}>×</button>
               </div>
 
-              <div className="ring-mode-switch" role="group" aria-label="Forma de insertar el anillo">
+              <div className="ring-mode-switch" role="group" aria-label={t("Forma de insertar el anillo")}>
                 <button
                   className={ringInsertMode === "replace" ? "active" : ""}
                   onClick={() => setRingInsertMode("replace")}
                   aria-pressed={ringInsertMode === "replace"}
                 >
                   <span aria-hidden="true">↻</span>
-                  Nueva molécula
+                  {t("Nueva molécula")}
                 </button>
                 <button
                   className={ringInsertMode === "attach" ? "active" : ""}
                   onClick={() => setRingInsertMode("attach")}
                   aria-pressed={ringInsertMode === "attach"}
                   disabled={!isCarbonAtom(selectedAtom) || selectedValence >= 4}
-                  title={!isCarbonAtom(selectedAtom) || selectedValence >= 4 ? "Selecciona un carbono con una valencia libre" : undefined}
+                  title={!isCarbonAtom(selectedAtom) || selectedValence >= 4 ? t("Selecciona un carbono con una valencia libre") : undefined}
                 >
                   <span aria-hidden="true">＋</span>
-                  Unir al C seleccionado
+                  {t("Unir al C seleccionado")}
                 </button>
                 <small>
                   {ringInsertMode === "attach"
-                    ? `${molecule.rings?.length ?? 0} anillo${molecule.rings?.length === 1 ? "" : "s"} actualmente`
-                    : "Reinicia solo la estructura"}
+                    ? language === "en"
+                      ? `${molecule.rings?.length ?? 0} ring${molecule.rings?.length === 1 ? "" : "s"} currently`
+                      : `${molecule.rings?.length ?? 0} anillo${molecule.rings?.length === 1 ? "" : "s"} actualmente`
+                    : t("Reinicia solo la estructura")}
                 </small>
               </div>
 
               <div className="ring-section">
                 <div className="ring-section-heading">
-                  <strong>Cicloalcanos</strong>
-                  <span>CₙH₂ₙ · enlaces simples</span>
+                  <strong>{t("Cicloalcanos")}</strong>
+                  <span>{t("CₙH₂ₙ · enlaces simples")}</span>
                 </div>
                 <div className="ring-grid cycle-ring-grid">
                   {CYCLE_TEMPLATES.map((template) => (
@@ -5856,7 +6173,7 @@ export default function Home() {
                       key={template.id}
                       className="ring-option"
                       onClick={() => loadRingTemplate(template)}
-                      title={`${ringInsertMode === "attach" ? "Unir" : "Cargar"} ${template.label.toLowerCase()}`}
+                      title={`${ringInsertMode === "attach" ? t("Unir") : t("Cargar")} ${localizedIupac(template.label).toLowerCase()}`}
                     >
                       <span className="ring-preview" aria-hidden="true">
                         <svg viewBox="0 0 48 48">
@@ -5864,8 +6181,8 @@ export default function Home() {
                         </svg>
                       </span>
                       <span className="ring-option-copy">
-                        <strong>{template.label}</strong>
-                        <small>{template.formula} · {template.detail}</small>
+                        <strong>{localizedIupac(template.label)}</strong>
+                        <small>{template.formula} · {localizedDetail(template.detail)}</small>
                       </span>
                     </button>
                   ))}
@@ -5874,8 +6191,8 @@ export default function Home() {
 
               <div className="ring-section aromatic-section">
                 <div className="ring-section-heading">
-                  <strong>Aromáticos monocíclicos</strong>
-                  <span>Benceno y derivados alquilados</span>
+                  <strong>{t("Aromáticos monocíclicos")}</strong>
+                  <span>{t("Benceno y derivados alquilados")}</span>
                 </div>
                 <div className="ring-grid aromatic-ring-grid">
                   {AROMATIC_TEMPLATES.map((template) => {
@@ -5887,8 +6204,8 @@ export default function Home() {
                         className={`ring-option aromatic-option ${unavailable ? "unavailable" : ""}`}
                         onClick={() => loadRingTemplate(template)}
                         title={unavailable
-                          ? "Este derivado se carga como ejemplo completo; usa Benceno para unir otro anillo"
-                          : `${ringInsertMode === "attach" ? "Unir" : "Cargar"} ${template.label.toLowerCase()}`}
+                          ? t("Este derivado se carga como ejemplo completo; usa Benceno para unir otro anillo")
+                          : `${ringInsertMode === "attach" ? t("Unir") : t("Cargar")} ${localizedIupac(template.label).toLowerCase()}`}
                         disabled={unavailable}
                       >
                         <span className="ring-preview aromatic-preview" aria-hidden="true">
@@ -5907,9 +6224,7 @@ export default function Home() {
                 </div>
               </div>
 
-              <p className="alkyl-note ring-note">
-                Puedes repetir “Unir al C seleccionado” para construir moléculas con varios anillos. Los anillos quedan conectados por enlaces simples; no se fusionan ni comparten carbonos.
-              </p>
+              <p className="alkyl-note ring-note">{t("Puedes repetir “Unir al C seleccionado” para construir moléculas con varios anillos. Los anillos quedan conectados por enlaces simples; no se fusionan ni comparten carbonos.")}</p>
             </div>
           )}
 
@@ -5917,15 +6232,15 @@ export default function Home() {
             <div className="alkyl-palette functional-palette" id="functional-palette">
               <div className="alkyl-palette-heading">
                 <div>
-                  <strong>Biblioteca de grupos funcionales</strong>
-                  <p>Selecciona primero el carbono que llevará el grupo. La valencia y el nombre se validan automáticamente.</p>
+                  <strong>{t("Biblioteca de grupos funcionales")}</strong>
+                  <p>{t("Selecciona primero el carbono que llevará el grupo. La valencia y el nombre se validan automáticamente.")}</p>
                 </div>
-                <button onClick={() => setShowFunctionalPalette(false)} aria-label="Cerrar grupos funcionales">×</button>
+                <button onClick={() => setShowFunctionalPalette(false)} aria-label={t("Cerrar grupos funcionales")}>×</button>
               </div>
 
               <div className="functional-priority-note">
                 <span aria-hidden="true">⇧</span>
-                <p><strong>La prioridad importa:</strong> el grupo principal define el sufijo y recibe el localizador más bajo.</p>
+                <p><strong>{t("La prioridad importa:")}</strong> {t("el grupo principal define el sufijo y recibe el localizador más bajo.")}</p>
               </div>
 
               {([
@@ -5935,8 +6250,8 @@ export default function Home() {
               ] as const).map((category) => (
                 <div className={`functional-section functional-${category.id}`} key={category.id}>
                   <div className="functional-section-heading">
-                    <strong>{category.title}</strong>
-                    <span>{category.detail}</span>
+                    <strong>{t(category.title)}</strong>
+                    <span>{t(category.detail)}</span>
                   </div>
                   <div className="functional-grid">
                     {FUNCTIONAL_GROUP_TEMPLATES
@@ -5946,15 +6261,15 @@ export default function Home() {
                           className="functional-option"
                           key={template.id}
                           onClick={() => addFunctionalGroup(template)}
-                          title={`Añadir ${template.label.toLowerCase()}: ${template.detail}`}
+                          title={language === "en" ? `Add ${t(template.label).toLowerCase()}: ${t(template.detail)}` : `Añadir ${template.label.toLowerCase()}: ${template.detail}`}
                         >
                           <span className="functional-formula">{template.shortFormula}</span>
                           <span className="functional-copy">
-                            <strong>{template.label}</strong>
-                            <small>{template.detail}</small>
+                            <strong>{t(template.label)}</strong>
+                            <small>{t(template.detail)}</small>
                           </span>
                           {template.requirement !== "open" && (
-                            <em>{template.requirement === "terminal-carbon" ? "C terminal" : "C interno"}</em>
+                            <em>{template.requirement === "terminal-carbon" ? t("C terminal") : t("C interno")}</em>
                           )}
                         </button>
                       ))}
@@ -5962,26 +6277,24 @@ export default function Home() {
                 </div>
               ))}
 
-              <p className="alkyl-note functional-note">
-                Para aldehídos, ácidos, ésteres y amidas usa un carbono terminal. Para una cetona, selecciona un carbono interno de la cadena.
-              </p>
+              <p className="alkyl-note functional-note">{t("Para aldehídos, ácidos, ésteres y amidas usa un carbono terminal. Para una cetona, selecciona un carbono interno de la cadena.")}</p>
             </div>
           )}
 
           <div className="notice" role="status">
             <span>i</span>
-            {notice}
+            {localizedDynamicText(notice)}
           </div>
 
           <div className="display-options">
-            <label className={viewMode === "skeletal" ? "option-disabled" : ""} title={viewMode === "skeletal" ? "Disponible en la vista semidesarrollada" : undefined}>
+            <label className={viewMode === "skeletal" ? "option-disabled" : ""} title={viewMode === "skeletal" ? t("Disponible en la vista semidesarrollada") : undefined}>
               <input type="checkbox" checked={showHydrogens} disabled={viewMode === "skeletal"} onChange={(event) => setShowHydrogens(event.target.checked)} />
-              <span /> Mostrar H implícitos
+              <span /> {t("Mostrar H implícitos")}
             </label>
             <label
               className={!automaticNumberingAvailable ? "option-disabled" : ""}
               title={!automaticNumberingAvailable
-                ? "La numeración automática se oculta para no atribuir localizadores de carbono a sustituyentes N-."
+                ? t("La numeración automática se oculta para no atribuir localizadores de carbono a sustituyentes N-.")
                 : undefined}
             >
               <input
@@ -5991,8 +6304,8 @@ export default function Home() {
                 onChange={(event) => setShowNumbering(event.target.checked)}
               />
               <span /> {automaticNumberingAvailable
-                ? `Numerar ${isRingStructure ? "anillo" : "cadena principal"}`
-                : "Numeración N- conservada en el nombre"}
+                ? `${t("Numerar")} ${isRingStructure ? t("anillo") : t("cadena principal")}`
+                : t("Numeración N- conservada en el nombre")}
             </label>
             <label>
               <input
@@ -6008,7 +6321,7 @@ export default function Home() {
                   );
                 }}
               />
-              <span /> Resaltar sustituyentes
+              <span /> {t("Resaltar sustituyentes")}
             </label>
           </div>
         </section>
@@ -6016,11 +6329,11 @@ export default function Home() {
         <aside className="analysis-card">
           <div className="analysis-heading">
             <div>
-              <p className="eyebrow">Análisis en tiempo real</p>
-              <h2>Nombre IUPAC sugerido</h2>
+              <p className="eyebrow">{t("Análisis en tiempo real")}</p>
+              <h2>{t("Nombre IUPAC sugerido")}</h2>
             </div>
             <div className="analysis-status">
-              <span className="valid-badge">Estructura válida</span>
+              <span className="valid-badge">{t("Estructura válida")}</span>
               <button
                 className="name-visibility-button"
                 onClick={() => {
@@ -6033,7 +6346,7 @@ export default function Home() {
                 }}
                 aria-pressed={!showIupacName}
               >
-                {showIupacName ? "Ocultar" : "Mostrar"}
+                {showIupacName ? t("Ocultar") : t("Mostrar")}
               </button>
             </div>
           </div>
@@ -6050,18 +6363,26 @@ export default function Home() {
                           type="button"
                           aria-pressed={Boolean(part.active)}
                           aria-label={part.active
-                            ? `Volver de ${part.common} a ${part.systematic}`
-                            : `Cambiar ${part.systematic} a ${part.common}`}
+                            ? language === "en"
+                              ? `Switch from ${localizedCommonAlkylName(part.common!)} back to ${localizedIupac(part.systematic!)}`
+                              : `Volver de ${part.common} a ${part.systematic}`
+                            : language === "en"
+                              ? `Change ${localizedIupac(part.systematic!)} to ${localizedCommonAlkylName(part.common!)}`
+                              : `Cambiar ${part.systematic} a ${part.common}`}
                           title={part.active
-                            ? `Volver a (${part.systematic})`
-                            : `Mostrar como ${part.common}`}
+                            ? language === "en"
+                              ? `Return to (${localizedIupac(part.systematic!)})`
+                              : `Volver a (${part.systematic})`
+                            : language === "en"
+                              ? `Show as ${localizedCommonAlkylName(part.common!)}`
+                              : `Mostrar como ${part.common}`}
                           onClick={() => toggleCommonAlkylName(
                             part.systematic!,
                             part.common!,
                             Boolean(part.active),
                           )}
                         >
-                          {part.text}
+                          {localizedAlkylPartText(part)}
                         </button>
                       ) : part.ringSystematic && part.ringSimplified && ringUnsaturationNameOption ? (
                         <button
@@ -6070,14 +6391,22 @@ export default function Home() {
                           type="button"
                           aria-pressed={Boolean(part.ringActive)}
                           aria-label={part.ringActive
-                            ? `Volver de ${part.ringSimplified} a ${part.ringSystematic}`
-                            : `Cambiar ${part.ringSystematic} a ${part.ringSimplified}`}
+                            ? language === "en"
+                              ? `Switch from ${localizedIupac(part.ringSimplified!)} back to ${localizedIupac(part.ringSystematic!)}`
+                              : `Volver de ${part.ringSimplified} a ${part.ringSystematic}`
+                            : language === "en"
+                              ? `Change ${localizedIupac(part.ringSystematic!)} to ${localizedIupac(part.ringSimplified!)}`
+                              : `Cambiar ${part.ringSystematic} a ${part.ringSimplified}`}
                           title={part.ringActive
-                            ? `Mostrar ${part.ringSystematic}`
-                            : `Omitir el localizador 1: ${part.ringSimplified}`}
+                            ? language === "en"
+                              ? `Show ${localizedIupac(part.ringSystematic!)}`
+                              : `Mostrar ${part.ringSystematic}`
+                            : language === "en"
+                              ? `Omit locant 1: ${localizedIupac(part.ringSimplified!)}`
+                              : `Omitir el localizador 1: ${part.ringSimplified}`}
                           onClick={() => toggleRingUnsaturationName(ringUnsaturationNameOption)}
                         >
-                          {part.text}
+                          {localizedIupac(part.text)}
                         </button>
                       ) : aromaticStereochemicalNames ? (
                         <button
@@ -6086,11 +6415,11 @@ export default function Home() {
                           type="button"
                           aria-pressed={showAromaticTechnicalName}
                           aria-label={showAromaticTechnicalName
-                            ? "Mostrar el nombre habitual sin descriptores E/Z"
-                            : "Mostrar el nombre técnico con descriptores E/Z"}
+                            ? language === "en" ? "Show the standard name without E/Z descriptors" : "Mostrar el nombre habitual sin descriptores E/Z"
+                            : language === "en" ? "Show the technical name with E/Z descriptors" : "Mostrar el nombre técnico con descriptores E/Z"}
                           title={showAromaticTechnicalName
-                            ? "Volver al nombre habitual"
-                            : "Ver la representación técnica del motor"}
+                            ? language === "en" ? "Return to the standard name" : "Volver al nombre habitual"
+                            : language === "en" ? "View the engine's technical representation" : "Ver la representación técnica del motor"}
                           onClick={() => {
                             setTechnicalAromaticMolecule((current) =>
                               current === molecule ? null : molecule,
@@ -6102,45 +6431,45 @@ export default function Home() {
                             );
                           }}
                         >
-                          {part.text}
+                          {localizedIupac(part.text)}
                         </button>
                       ) : (
-                        <span key={`name-part-${index}`}>{part.text}</span>
+                        <span key={`name-part-${index}`}>{localizedIupac(part.text)}</span>
                       ),
                     )
-                  : "Respuesta oculta"}
+                  : t("Respuesta oculta")}
               </p>
               {showIupacName && (hasInteractiveAlkylName || hasInteractiveRingName) && (
                 <small className="alkyl-name-help">
                   {hasInteractiveAlkylName && hasInteractiveRingName
-                    ? "Pulsa cada fragmento destacado para alternar su forma de nomenclatura."
+                    ? t("Pulsa cada fragmento destacado para alternar su forma de nomenclatura.")
                     : hasInteractiveRingName
-                      ? "Pulsa el nombre del ciclo para mostrar u omitir el localizador 1."
-                      : "Pulsa el sustituyente destacado para cambiar su forma; el orden alfabético se recalcula automáticamente."}
+                      ? t("Pulsa el nombre del ciclo para mostrar u omitir el localizador 1.")
+                      : t("Pulsa el sustituyente destacado para cambiar su forma; el orden alfabético se recalcula automáticamente.")}
                 </small>
               )}
               {showIupacName && aromaticStereochemicalNames && (
                 <small className="aromatic-name-help">
                   {showAromaticTechnicalName
-                    ? "Pulsa el nombre para volver a la forma habitual de examen."
-                    : "Pulsa el nombre para consultar la forma técnica que interpreta el motor."}
+                    ? t("Pulsa el nombre para volver a la forma habitual de examen.")
+                    : t("Pulsa el nombre para consultar la forma técnica que interpreta el motor.")}
                 </small>
               )}
               {showIupacName && aromaticStereochemicalNames && showAromaticTechnicalName && (
                 <small className="aromatic-technical-note" role="note">
-                  Estos descriptores reflejan cómo el motor geométrico codifica una forma de Kekulé del anillo con dobles enlaces alternados. No representan estructuras de resonancia distintas y, en la nomenclatura habitual, se omiten.
+                  {t("Estos descriptores reflejan cómo el motor geométrico codifica una forma de Kekulé del anillo con dobles enlaces alternados. No representan estructuras de resonancia distintas y, en la nomenclatura habitual, se omiten.")}
                 </small>
               )}
               {showIupacName && analysis.commonName && (
-                <small>Nombre tradicional: <strong>{analysis.commonName}</strong></small>
+                <small>{t("Nombre tradicional:")} <strong>{translateCommonName(language, analysis.commonName)}</strong></small>
               )}
             </div>
             <button
-              title={showIupacName ? "Copiar nombre" : "Muestra el nombre antes de copiarlo"}
-              aria-label="Copiar nombre IUPAC"
+              title={showIupacName ? t("Copiar nombre") : t("Muestra el nombre antes de copiarlo")}
+              aria-label={t("Copiar nombre IUPAC")}
               disabled={!showIupacName}
               onClick={() => {
-                navigator.clipboard?.writeText(displayedIupacName);
+                navigator.clipboard?.writeText(localizedDisplayedIupacName);
                 setNotice("Nombre copiado al portapapeles.");
               }}
             >
@@ -6149,12 +6478,12 @@ export default function Home() {
           </div>
 
           {analysis.functionalGroups.length > 0 && (
-            <div className="functional-detection" aria-label="Grupos funcionales detectados">
-              <span>Detectados</span>
+            <div className="functional-detection" aria-label={t("Grupos funcionales detectados")}>
+              <span>{t("Detectados")}</span>
               <div>
                 {[...new Map(analysis.functionalGroups.map((group) => [group.label, group])).values()]
                   .map((group) => (
-                    <strong key={group.label}>{group.label}</strong>
+                    <strong key={group.label}>{t(group.label)}</strong>
                   ))}
               </div>
             </div>
@@ -6162,29 +6491,29 @@ export default function Home() {
 
           <div className="formula-row">
             <div>
-              <span>Fórmula molecular</span>
+              <span>{t("Fórmula molecular")}</span>
               <strong>{analysis.formula}</strong>
             </div>
             <div>
-              <span>Carbonos totales</span>
+              <span>{t("Carbonos totales")}</span>
               <strong>{carbonCount}</strong>
             </div>
             <div>
-              <span>Grupo principal</span>
-              <strong>{analysis.primaryFunctionalLabel ?? (analysis.functionalGroups[0]?.label || "Hidrocarburo")}</strong>
+              <span>{t("Grupo principal")}</span>
+              <strong>{analysis.primaryFunctionalLabel ? t(analysis.primaryFunctionalLabel) : analysis.functionalGroups[0]?.label ? t(analysis.functionalGroups[0].label) : t("Hidrocarburo")}</strong>
             </div>
           </div>
 
           <div className={`reasoning-section ${showReasoningHelp ? "expanded" : "collapsed"}`}>
             <div className="reasoning-heading">
               <div>
-                <h3>Cómo se obtiene</h3>
-                <span>{showReasoningHelp ? "Prioridades que aplican" : "Modo examen"}</span>
+                <h3>{t("Cómo se obtiene")}</h3>
+                <span>{showReasoningHelp ? t("Prioridades que aplican") : t("Modo examen")}</span>
               </div>
               <button
                 type="button"
                 className="reasoning-visibility-button"
-                aria-label={showReasoningHelp ? "Ocultar ayuda de nomenclatura" : "Mostrar ayuda de nomenclatura"}
+                aria-label={showReasoningHelp ? t("Ocultar ayuda de nomenclatura") : t("Mostrar ayuda de nomenclatura")}
                 aria-expanded={showReasoningHelp}
                 aria-controls="iupac-reasoning-content"
                 onClick={() => {
@@ -6201,14 +6530,14 @@ export default function Home() {
                   <circle cx="12" cy="12" r="2.7" />
                   {!showReasoningHelp && <path className="eye-slash" d="m4 4 16 16" />}
                 </svg>
-                <span>{showReasoningHelp ? "Ocultar ayuda" : "Mostrar ayuda"}</span>
+                <span>{showReasoningHelp ? t("Ocultar ayuda") : t("Mostrar ayuda")}</span>
               </button>
             </div>
 
             <div className="reasoning-collapse" aria-hidden={!showReasoningHelp}>
               <div id="iupac-reasoning-content">
                 <ol>
-                  {reasoningSteps.map((step) => (
+                  {localizedReasoningSteps.map((step) => (
                     <li key={step.number}>
                       <span>{step.number}</span>
                       <div>
@@ -6226,14 +6555,14 @@ export default function Home() {
 
       <section className="examples-card">
         <div>
-          <p className="eyebrow">Explora estructuras conocidas</p>
-          <h2>Ejemplos rápidos</h2>
+          <p className="eyebrow">{t("Explora estructuras conocidas")}</p>
+          <h2>{t("Ejemplos rápidos")}</h2>
         </div>
         <div className="preset-list">
           {PRESETS.map((preset) => (
             <button key={preset.label} onClick={() => loadPreset(preset)}>
               <span className="preset-structure">{preset.molecule.atoms.filter(isCarbonAtom).length} C</span>
-              <span>{preset.label}</span>
+              <span>{localizedIupac(preset.label)}</span>
               <i>→</i>
             </button>
           ))}
@@ -6241,16 +6570,16 @@ export default function Home() {
       </section>
 
       <footer>
-        <p><strong>Alcance actual:</strong> hidrocarburos y nueve familias funcionales con O, N y halógenos.</p>
+        <p><strong>{t("Alcance actual:")}</strong> {t("hidrocarburos y nueve familias funcionales con O, N y halógenos.")}</p>
         <p className="footer-note">
-          Los hidrógenos se completan automáticamente respetando las valencias de C, O, N y halógenos.
+          {t("Los hidrógenos se completan automáticamente respetando las valencias de C, O, N y halógenos.")}
           <button
             className="credit-trigger"
             onClick={() => setShowCreatorCredit((visible) => !visible)}
             aria-expanded={showCreatorCredit}
             aria-controls="creator-credit"
-            aria-label="Descubrir crédito del autor"
-            title="Hay algo escondido aquí"
+            aria-label={t("Descubrir crédito del autor")}
+            title={t("Hay algo escondido aquí")}
           >
             ✦
           </button>
@@ -6260,9 +6589,9 @@ export default function Home() {
           id="creator-credit"
           aria-hidden={!showCreatorCredit}
         >
-          <span>Una experiencia creada por</span>
-          <strong>Profe Alex Sáez</strong>
-          <small>Química que se construye.</small>
+          <span>{t("Una experiencia creada por")}</span>
+          <strong>{t("Profe Alex Sáez")}</strong>
+          <small>{t("Química que se construye.")}</small>
         </div>
       </footer>
     </main>
