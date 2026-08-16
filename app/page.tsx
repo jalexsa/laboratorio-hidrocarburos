@@ -5859,16 +5859,20 @@ export default function Home() {
                       ? "C"
                       : "CH"
                     : "C"
-                  : showHydrogens && hydrogenCount
-                    ? `${element}H`
-                    : element;
+                  : viewMode === "skeletal"
+                    ? hydrogenCount
+                      ? `H`
+                      : element
+                    : showHydrogens && hydrogenCount
+                      ? `H`
+                      : element;
                 const hydrogenSubscript = showHydrogens && hydrogenCount > 1
                   ? hydrogenCount
                   : undefined;
                 return (
                   <g
                     key={atom.id}
-                    className={`carbon-node ${carbonAtom ? "carbon-element" : `hetero-node element-${element.toLowerCase()}`} ${viewMode === "skeletal" && carbonAtom ? "skeletal-node" : "condensed-node"} ${isSelected ? "selected" : ""} ${mainChainSet.has(atom.id) ? "on-main-chain" : "on-branch"}`}
+                    className={`carbon-node ${carbonAtom ? "carbon-element" : `hetero-node element-${element.toLowerCase()}`} ${viewMode === "skeletal" ? (carbonAtom ? "skeletal-node" : "skeletal-hetero-node") : "condensed-node"} ${isSelected ? "selected" : ""} ${mainChainSet.has(atom.id) ? "on-main-chain" : "on-branch"}`}
                     transform={`translate(${position.x} ${position.y})`}
                     onClick={() => {
                       previousSelectedId.current = selectedAtom.id;
@@ -5885,30 +5889,54 @@ export default function Home() {
                       }
                     }}
                   >
-                    {viewMode === "skeletal" && carbonAtom ? (
-                      <>
-                        <circle className="skeletal-hit-target" r="31" />
-                        {isSelected && <circle className="skeletal-selection-ring" r="22" />}
-                        <circle className="skeletal-anchor" r="3.2" />
-                        {carbonCount === 1 && molecule.atoms.length === 1 && (
-                          <g className="methane-marker">
-                            <circle r="28" />
-                            <text textAnchor="middle" dominantBaseline="central">
-                              <tspan>CH</tspan>
-                              <tspan className="hydrogen-subscript" baselineShift="sub">4</tspan>
-                            </text>
-                          </g>
-                        )}
-                        {effectiveShowNumbering && chainNumber && carbonCount > 1 && (
-                          <g
-                            className="skeletal-number"
-                            transform={`translate(${numberBadgeOffset.x} ${numberBadgeOffset.y})`}
-                          >
-                            <circle className="number-circle" r="12" />
-                            <text className="number-label" textAnchor="middle" dominantBaseline="central">{chainNumber}</text>
-                          </g>
-                        )}
-                      </>
+                    {viewMode === "skeletal" ? (
+                      carbonAtom ? (
+                        <>
+                          <circle className="skeletal-hit-target" r="31" />
+                          {isSelected && <circle className="skeletal-selection-ring" r="22" />}
+                          <circle className="skeletal-anchor" r="3.2" />
+                          {carbonCount === 1 && molecule.atoms.length === 1 && (
+                            <g className="methane-marker">
+                              <circle r="28" />
+                              <text textAnchor="middle" dominantBaseline="central">
+                                <tspan>CH</tspan>
+                                <tspan className="hydrogen-subscript" baselineShift="sub">4</tspan>
+                              </text>
+                            </g>
+                          )}
+                          {effectiveShowNumbering && chainNumber && carbonCount > 1 && (
+                            <g
+                              className="skeletal-number"
+                              transform={`translate(${numberBadgeOffset.x} ${numberBadgeOffset.y})`}
+                            >
+                              <circle className="number-circle" r="12" />
+                              <text className="number-label" textAnchor="middle" dominantBaseline="central">{chainNumber}</text>
+                            </g>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <circle className="skeletal-hit-target skeletal-hetero-hit-target" r="24" />
+                          {isSelected && <circle className="skeletal-selection-ring skeletal-hetero-selection-ring" r="18" />}
+                          <text className="atom-label skeletal-hetero-label" textAnchor="middle" dominantBaseline="central">
+                            <tspan>{atomLabel}</tspan>
+                            {hydrogenSubscript && (
+                              <tspan className="hydrogen-subscript" baselineShift="sub">
+                                {hydrogenSubscript}
+                              </tspan>
+                            )}
+                          </text>
+                          {effectiveShowNumbering && chainNumber && (
+                            <g
+                              className="skeletal-number"
+                              transform={`translate(${numberBadgeOffset.x} ${numberBadgeOffset.y})`}
+                            >
+                              <circle className="number-circle" r="12" />
+                              <text className="number-label" textAnchor="middle" dominantBaseline="central">{chainNumber}</text>
+                            </g>
+                          )}
+                        </>
+                      )
                     ) : (
                       <>
                         {isSelected && <circle className="selection-ring" r="39" />}
@@ -6568,6 +6596,15 @@ export default function Home() {
 
       <footer>
         <p><strong>{t("Alcance actual:")}</strong> {t("hidrocarburos y nueve familias funcionales con O, N y halógenos.")}</p>
+        <a
+          className="footer-instagram"
+          href="https://www.instagram.com/sciu.science/"
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={t("Síguenos en Instagram: @sciu.science")}
+        >
+          {t("Síguenos en Instagram: @sciu.science")}
+        </a>
         <p className="footer-note">
           {t("Los hidrógenos se completan automáticamente respetando las valencias de C, O, N y halógenos.")}
           <button
