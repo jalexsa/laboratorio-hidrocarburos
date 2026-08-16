@@ -1466,22 +1466,30 @@ button {
   stroke: #3d8f7b;
 }
 
-.skeletal-hetero-node .skeletal-hit-target {
+.skeletal-hetero-hit-target {
   fill: rgba(255, 255, 255, 0.001);
 }
 
-.skeletal-hetero-node:hover .skeletal-hit-target,
-.skeletal-hetero-node:focus .skeletal-hit-target {
+.skeletal-hetero-node:hover .skeletal-hetero-hit-target,
+.skeletal-hetero-node:focus .skeletal-hetero-hit-target {
   fill: rgba(86, 148, 132, 0.06);
   stroke: rgba(63, 137, 119, 0.22);
 }
 
+.skeletal-hetero-badge {
+  fill: rgba(255, 255, 255, 0.94);
+  stroke: rgba(83, 134, 123, 0.62);
+  stroke-width: 1.8;
+}
+
 .skeletal-hetero-selection-ring {
   fill: rgba(255, 255, 255, 0.56);
+  stroke-width: 2;
+  stroke-dasharray: 4 3;
 }
 
 .skeletal-hetero-label {
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 900;
   paint-order: stroke fill;
   stroke: rgba(255, 255, 255, 0.95);
@@ -2200,7 +2208,9 @@ button {
 }
 
 .display-options {
-  display: flex;
+  display: none;
+  /* temporarily hidden while skeletal/functional-group rendering is stabilized */
+
   gap: 22px;
   padding: 13px 24px 20px;
 }
@@ -4762,6 +4772,11 @@ html[data-theme="dark"] .hetero-node.element-f .atom-label,
 html[data-theme="dark"] .hetero-node.element-cl .atom-label,
 html[data-theme="dark"] .hetero-node.element-br .atom-label,
 html[data-theme="dark"] .hetero-node.element-i .atom-label { fill: #9bd1a4; }
+
+html[data-theme="dark"] .skeletal-hetero-badge {
+  fill: rgba(16, 29, 26, 0.96);
+  stroke: rgba(116, 182, 164, 0.62);
+}
 
 html[data-theme="dark"] .skeletal-hetero-selection-ring {
   fill: rgba(7, 18, 16, 0.58);
