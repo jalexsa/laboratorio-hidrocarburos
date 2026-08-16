@@ -881,30 +881,20 @@ button {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 58px;
+  width: 70px;
   height: 58px;
   border: 1px solid #bad6cc;
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.86);
   box-shadow: 0 10px 25px rgba(32, 73, 64, 0.08);
+  overflow: hidden;
 }
 
-.brand-mark span {
-  display: grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: var(--ink);
-  color: white;
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.brand-mark i {
-  width: 9px;
-  height: 2px;
-  background: #74aa9e;
+.brand-mark img {
+  display: block;
+  width: 58px;
+  height: auto;
+  object-fit: contain;
 }
 
 .brand-copy p,
@@ -2901,9 +2891,13 @@ button:focus-visible,
   }
 
   .brand-mark {
-    width: 48px;
+    width: 58px;
     height: 48px;
     border-radius: 14px;
+  }
+
+  .brand-mark img {
+    width: 48px;
   }
 
   .scope-pill {

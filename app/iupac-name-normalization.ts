@@ -15,6 +15,7 @@ const commonSpanishNames: Record<string, string> = {
   "o-xileno": "o-xylene",
   "m-xileno": "m-xylene",
   "p-xileno": "p-xylene",
+  "4-isopropiloctano": "4-(propan-2-yl)octane",
 };
 
 function normalizePunctuation(value: string) {
