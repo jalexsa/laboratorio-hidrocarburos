@@ -83,6 +83,26 @@ test("allows lowering a bond order and detects invalid imported structures", () 
   assert.equal(violation?.attempted, 5);
 });
 
+
+
+test("accepts the formal valences of a nitro group imported from OPSIN", () => {
+  const molecule = {
+    atoms: [
+      { id: 1, x: 0, y: 0 },
+      { id: 2, x: 1, y: 0, element: "N", charge: 1 },
+      { id: 3, x: 2, y: -0.6, element: "O" },
+      { id: 4, x: 2, y: 0.6, element: "O", charge: -1 },
+    ],
+    bonds: [[1, 2, 1], [2, 3, 2], [2, 4, 1]],
+  };
+
+  assert.equal(findMoleculeValenceViolation(molecule), null);
+  assert.equal(getAtomValenceViolation(molecule, 2, 0), null);
+  const oxygenViolation = getAtomValenceViolation(molecule, 4, 1);
+  assert.ok(oxygenViolation);
+  assert.equal(oxygenViolation.limit, 1);
+});
+
 test("chooses the neighbor that matches each horizontal arrow", () => {
   const molecule = {
     atoms: [

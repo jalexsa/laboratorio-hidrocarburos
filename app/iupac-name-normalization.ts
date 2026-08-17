@@ -5,6 +5,9 @@ const commonSpanishNames: Record<string, string> = {
   "acido benzoico": "benzoic acid",
   "acido formico": "formic acid",
   anilina: "aniline",
+  bencenamina: "benzenamine",
+  benzonitrilo: "benzonitrile",
+  benzamida: "benzamide",
   benceno: "benzene",
   bifenilo: "biphenyl",
   formaldehido: "methanal",
@@ -45,6 +48,13 @@ function normalizePunctuation(value: string) {
 
 function translateCore(value: string) {
   let translated = value
+    // Retained and systematic nitrogen parent names need to be translated
+    // before the generic suffix rules. This also covers substituted parents
+    // such as 4-nitroanilina and N-metilanilina.
+    .replace(/anilina/g, "aniline")
+    .replace(/bencenamina/g, "benzenamine")
+    .replace(/benzonitrilo/g, "benzonitrile")
+    .replace(/benzamida/g, "benzamide")
     .replace(/metoxi/g, "methoxy")
     .replace(/etoxi/g, "ethoxy")
     .replace(/propoxi/g, "propoxy")
@@ -105,9 +115,13 @@ function translateCore(value: string) {
     .replace(/benzoico$/g, "benzoic")
     .replace(/carbaldehido$/g, "carbaldehyde")
     .replace(/carboxilico$/g, "carboxylic acid")
-    // Spanish parent nitriles are commonly written as butanonitrilo,
-    // propanonitrilo, etc.; OPSIN expects butanenitrile/propanenitrile.
+    // Spanish parent nitriles are commonly written as butanonitrilo or
+    // pentanodinitrilo. OPSIN uses butanenitrile / pentanedinitrile.
+    // Ring carbonitriles and carboxamides also retain the parent alkane e.
+    .replace(/([a-z]+)ano(di|tri|tetra|penta|hexa)nitrilo$/g, "$1ane$2nitrile")
     .replace(/([a-z]+)anonitrilo$/g, "$1anenitrile")
+    .replace(/([a-z]+)anocarbonitrilo$/g, "$1anecarbonitrile")
+    .replace(/([a-z]+)anocarboxamida$/g, "$1anecarboxamide")
     .replace(/nitrilo$/g, "nitrile")
     .replace(/aldehido$/g, "aldehyde")
     .replace(/tetraona$/g, "tetraone")
