@@ -52,6 +52,7 @@ function translateCore(value: string) {
     .replace(/hidroxi/g, "hydroxy")
     .replace(/amino/g, "__amino_prefix__")
     .replace(/carbamoil/g, "carbamoyl")
+    .replace(/ciano/g, "cyano")
     .replace(/benceno/g, "benzene")
     .replace(/fenol/g, "phenol")
     .replace(/fenoxi/g, "phenoxy")
@@ -104,6 +105,9 @@ function translateCore(value: string) {
     .replace(/benzoico$/g, "benzoic")
     .replace(/carbaldehido$/g, "carbaldehyde")
     .replace(/carboxilico$/g, "carboxylic acid")
+    // Spanish parent nitriles are commonly written as butanonitrilo,
+    // propanonitrilo, etc.; OPSIN expects butanenitrile/propanenitrile.
+    .replace(/([a-z]+)anonitrilo$/g, "$1anenitrile")
     .replace(/nitrilo$/g, "nitrile")
     .replace(/aldehido$/g, "aldehyde")
     .replace(/tetraona$/g, "tetraone")

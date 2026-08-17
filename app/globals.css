@@ -1522,6 +1522,11 @@ button {
   pointer-events: none;
 }
 
+.atom-charge {
+  font-size: 0.68em;
+  font-weight: 900;
+}
+
 .hydrogen-subscript {
   font-size: 0.96em;
   font-weight: 800;

@@ -57,6 +57,40 @@ export function moleculeFromSmiles(smiles: string): OpenChemLibBuildResult {
     };
   }
 
+  const bondedNeighbors = (atomIndex: number) => {
+    const neighbors: Array<{ atomIndex: number; order: number }> = [];
+    for (let bondIndex = 0; bondIndex < oclMolecule.getAllBonds(); bondIndex += 1) {
+      const left = oclMolecule.getBondAtom(0, bondIndex);
+      const right = oclMolecule.getBondAtom(1, bondIndex);
+      if (left === atomIndex) neighbors.push({ atomIndex: right, order: oclMolecule.getBondOrder(bondIndex) });
+      if (right === atomIndex) neighbors.push({ atomIndex: left, order: oclMolecule.getBondOrder(bondIndex) });
+    }
+    return neighbors;
+  };
+
+  const isNitroNitrogen = (atomIndex: number) => {
+    if (oclMolecule.getAtomicNo(atomIndex) !== 7 || oclMolecule.getAtomCharge(atomIndex) !== 1) return false;
+    const neighbors = bondedNeighbors(atomIndex);
+    const oxygenNeighbors = neighbors.filter(({ atomIndex: neighborIndex }) => oclMolecule.getAtomicNo(neighborIndex) === 8);
+    const carbonNeighbors = neighbors.filter(({ atomIndex: neighborIndex }) => oclMolecule.getAtomicNo(neighborIndex) === 6);
+    return carbonNeighbors.length >= 1
+      && oxygenNeighbors.length === 2
+      && oxygenNeighbors.some(({ order }) => order === 2)
+      && oxygenNeighbors.some(({ atomIndex: neighborIndex, order }) => order === 1 && oclMolecule.getAtomCharge(neighborIndex) === -1);
+  };
+
+  const isSupportedFormalCharge = (atomIndex: number) => {
+    const charge = oclMolecule.getAtomCharge(atomIndex);
+    if (charge === 0) return true;
+    if (charge === 1) return isNitroNitrogen(atomIndex);
+    if (charge === -1 && oclMolecule.getAtomicNo(atomIndex) === 8) {
+      return bondedNeighbors(atomIndex).some(({ atomIndex: neighborIndex, order }) =>
+        order === 1 && isNitroNitrogen(neighborIndex),
+      );
+    }
+    return false;
+  };
+
   const atomIndexToId = new Map<number, number>();
   const rawAtoms: Array<GeneratedAtom & { rawX: number; rawY: number }> = [];
   for (let atomIndex = 0; atomIndex < oclMolecule.getAllAtoms(); atomIndex += 1) {
@@ -69,10 +103,10 @@ export function moleculeFromSmiles(smiles: string): OpenChemLibBuildResult {
         error: `La estructura contiene ${oclMolecule.getAtomLabel(atomIndex)}. Por ahora el laboratorio admite C, O, N y halógenos.`,
       };
     }
-    if (oclMolecule.getAtomCharge(atomIndex) !== 0) {
+    if (!isSupportedFormalCharge(atomIndex)) {
       return {
         ok: false,
-        error: "La estructura contiene cargas formales que este canvas todavía no representa.",
+        error: "La estructura contiene cargas formales que este canvas todavía no representa fuera de grupos nitro.",
       };
     }
     const id = rawAtoms.length + 1;
@@ -82,6 +116,7 @@ export function moleculeFromSmiles(smiles: string): OpenChemLibBuildResult {
       x: 0,
       y: 0,
       element,
+      ...(oclMolecule.getAtomCharge(atomIndex) ? { charge: oclMolecule.getAtomCharge(atomIndex) } : {}),
       rawX: oclMolecule.getAtomX(atomIndex),
       rawY: oclMolecule.getAtomY(atomIndex),
     });
