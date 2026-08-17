@@ -84,3 +84,10 @@ Additional verification added:
 - Ring amines/amides now include N-substituent prefixes (e.g. N-methyl derivatives) in the suggested name.
 - Nitro formal charges remain charge-aware in canvas valence validation and rendering.
 - Added regression tests for 2-nitrobutano, pentanodinitrilo and 4-nitroanilina.
+
+
+## Display controls restored
+- Restored the lower display-options bar (carbon numbering, substituent highlighting, implicit-H visibility).
+- The implicit-H switch now also works in skeletal view, including hydrogens attached to N/O and other heteroatoms.
+- When implicit H is hidden, skeletal heteroatoms remain visible as their element symbol (for example N instead of NH2).
+- Methane respects the same H-visibility switch in skeletal view.

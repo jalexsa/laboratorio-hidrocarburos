@@ -6033,7 +6033,7 @@ export default function Home() {
                 const position = displayPositions.get(atom.id)!;
                 const numberBadgeOffset = skeletalNumberBadgeOffsets.get(atom.id)
                   ?? SKELETAL_NUMBER_BADGE_OFFSET;
-                const showHydrogenOnLabel = viewMode === "skeletal" || showHydrogens;
+                const showHydrogenOnLabel = showHydrogens;
                 const atomLabel = carbonAtom
                   ? showHydrogenOnLabel
                     ? hydrogenCount === 0
@@ -6079,8 +6079,14 @@ export default function Home() {
                             <g className="methane-marker">
                               <circle r="28" />
                               <text textAnchor="middle" dominantBaseline="central">
-                                <tspan>CH</tspan>
-                                <tspan className="hydrogen-subscript" baselineShift="sub">4</tspan>
+                                {showHydrogens ? (
+                                  <>
+                                    <tspan>CH</tspan>
+                                    <tspan className="hydrogen-subscript" baselineShift="sub">4</tspan>
+                                  </>
+                                ) : (
+                                  <tspan>C</tspan>
+                                )}
                               </text>
                             </g>
                           )}
@@ -6522,8 +6528,8 @@ export default function Home() {
           </div>
 
           <div className="display-options">
-            <label className={viewMode === "skeletal" ? "option-disabled" : ""} title={viewMode === "skeletal" ? t("Disponible en la vista semidesarrollada") : undefined}>
-              <input type="checkbox" checked={showHydrogens} disabled={viewMode === "skeletal"} onChange={(event) => setShowHydrogens(event.target.checked)} />
+            <label title={t("Mostrar u ocultar hidrógenos implícitos, incluidos los unidos a heteroátomos")}>
+              <input type="checkbox" checked={showHydrogens} onChange={(event) => setShowHydrogens(event.target.checked)} />
               <span /> {t("Mostrar H implícitos")}
             </label>
             <label
