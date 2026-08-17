@@ -460,7 +460,7 @@ export function getAtomValenceViolation(
   if (!atom) return null;
   const element = getElement(atom);
   const current = getValenceUsed(atomId, molecule);
-  const limit = elementValences[element];
+  const limit = getValenceLimit(atomId, molecule);
   const attempted = current + addedValence;
   return attempted > limit
     ? { atomId, element, current, attempted, limit }
@@ -484,7 +484,7 @@ export function findMoleculeValenceViolation(molecule: Molecule): ValenceViolati
   for (const atom of molecule.atoms) {
     const current = getValenceUsed(atom.id, molecule);
     const element = getElement(atom);
-    const limit = elementValences[element];
+    const limit = getValenceLimit(atom.id, molecule);
     if (current > limit) {
       return { atomId: atom.id, element, current, attempted: current, limit };
     }
@@ -2425,8 +2425,10 @@ function makeRingFunctionalParentName(
       return `benceno-${locantText}-${suffixMultiplier(count, "ol")}ol`;
     }
     if (primaryKind === "amine" && allGroupsOnRing) {
+      // Anilina is a retained IUPAC parent name and gives clearer names for
+      // substituted aromatic amines (for example 4-nitroanilina).
       return count === 1
-        ? "bencenamina"
+        ? "anilina"
         : `benceno-${locantText}-${suffixMultiplier(count, "amina")}amina`;
     }
     if (primaryKind === "carboxylicAcid") {
@@ -2588,11 +2590,15 @@ function analyzeFunctionalRing(
   const singleSubstituent = chosen.substituents.length === 1
     ? resolveSubstituentNaming(chosen.substituents[0], new Set(enabledAliases))
     : undefined;
-  const ringPrefixParts = !primaryKind && singleSubstituent
+  const carbonAndFunctionalPrefixParts = !primaryKind && singleSubstituent
     ? [singleSubstituent.complex
         ? `(${singleSubstituent.name})`
         : singleSubstituent.name]
     : formatSubstituentGroups(chosen.substituents, enabledAliases);
+  const ringPrefixParts = sortFormattedPrefixParts([
+    ...nitrogenSubstituentPrefixes(primaryGroups[0], chosen.path, molecule, skeleton),
+    ...carbonAndFunctionalPrefixParts,
+  ]);
   const name = combinePrefixAndParent(ringPrefixParts, chainName);
   const commonName = ring.kind === "aromatic"
     ? aromaticFunctionalCommonName(chainName, chosen.substituents)
@@ -3273,7 +3279,7 @@ function usesNitrogenLocants(value: string) {
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/\s+/g, "")
     .toLocaleLowerCase("es");
-  return /(?:amina|amine|amida|amide)/.test(normalized)
+  return /(?:amina|amine|amida|amide|anilina|aniline)/.test(normalized)
     && /(^|[-,(])n(?=[,-])/.test(normalized);
 }
 
@@ -4196,10 +4202,18 @@ export default function Home() {
         : "";
       const omittedRingLocant = /^ciclo[a-z]+(?:eno|ino)$/.test(normalizedInput);
 
-      commit(
+      const committed = commit(
         next,
         `Estructura creada desde «${submittedName}». Puedes seguir editándola átomo por átomo.`,
       );
+      if (!committed) {
+        setNameBuilderOpen(true);
+        setNameBuilderFeedback({
+          kind: "error",
+          message: "La estructura fue interpretada, pero el canvas la bloqueó por una validación de valencia.",
+        });
+        return;
+      }
       setReasoningSourceName(submittedName);
       // If OPSIN/OpenChemLib successfully parsed a structure whose nested
       // functional groups exceed the local naming grammar, keep the validated

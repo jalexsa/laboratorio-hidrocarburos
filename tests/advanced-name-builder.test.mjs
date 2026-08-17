@@ -197,15 +197,24 @@ test("the reported fluorinated diketone keeps an integrated fallback", async () 
   assert.equal(result.value.smiles, "O=C1CC(F)(CC(=O)C)CCC1");
 });
 
-test("nitro and nitrile Spanish names translate to OPSIN English", () => {
+test("nitrogen-family Spanish names translate to OPSIN English", () => {
   assert.equal(translateSpanishIupacToOpsin("2-nitropropano"), "2-nitropropane");
+  assert.equal(translateSpanishIupacToOpsin("2-nitrobutano"), "2-nitrobutane");
   assert.equal(translateSpanishIupacToOpsin("butanonitrilo"), "butanenitrile");
+  assert.equal(translateSpanishIupacToOpsin("pentanodinitrilo"), "pentanedinitrile");
+  assert.equal(translateSpanishIupacToOpsin("4-nitroanilina"), "4-nitroaniline");
+  assert.equal(translateSpanishIupacToOpsin("N-metilanilina"), "N-methylaniline");
+  assert.equal(translateSpanishIupacToOpsin("ciclohexanocarbonitrilo"), "cyclohexanecarbonitrile");
+  assert.equal(translateSpanishIupacToOpsin("ciclohexanocarboxamida"), "cyclohexanecarboxamide");
 });
 
-test("nitropropane and butanenitrile retain offline fallbacks", async () => {
+test("representative nitro, nitrile and aromatic amine names retain offline fallbacks", async () => {
   const names = [
     ["2-nitropropano", "CC([N+](=O)[O-])C"],
+    ["2-nitrobutano", "CC([N+](=O)[O-])CC"],
     ["butanonitrilo", "CCCC#N"],
+    ["pentanodinitrilo", "N#CCCCC#N"],
+    ["4-nitroanilina", "Nc1ccc([N+](=O)[O-])cc1"],
   ];
 
   for (const [name, smiles] of names) {

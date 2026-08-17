@@ -67,3 +67,20 @@ Additional verification added:
 - Offline fallback tests for both compounds.
 - OpenChemLib test for the nitro formal-charge pattern.
 - Local nomenclature/reasoning tests requiring `butanonitrilo` to identify nitrile as the principal group and `2-nitropropano` to identify `nitro` as a substituent.
+
+## Nitro import valence hotfix
+
+- The global canvas validators now use charge-aware valence limits instead of the neutral-element table.
+- `N+` in a nitro group is therefore allowed to have bond-order valence 4, while `O-` is limited to 1.
+- Advanced name import no longer reports a false success if `commit()` rejects the generated molecule.
+- Added a regression test for the formal valence pattern `C-[N+](=O)[O-]`.
+
+
+
+## Comprehensive nitrogen-family pass
+- Advanced Spanish → OPSIN bridge now covers substituted aniline, mono/poly-nitriles, ring carbonitriles and ring carboxamides.
+- Added integrated fallbacks for 2-nitrobutane, pentanedinitrile and 4-nitroaniline.
+- Aromatic primary amines use retained parent `anilina`, so para-nitro gives `4-nitroanilina`.
+- Ring amines/amides now include N-substituent prefixes (e.g. N-methyl derivatives) in the suggested name.
+- Nitro formal charges remain charge-aware in canvas valence validation and rendering.
+- Added regression tests for 2-nitrobutano, pentanodinitrilo and 4-nitroanilina.
