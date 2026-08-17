@@ -2873,10 +2873,20 @@ footer strong {
 }
 
 button:focus-visible,
-.carbon-node:focus-visible,
-.bond-control:focus-visible {
+.carbon-node:focus-visible {
   outline: 3px solid rgba(40, 111, 126, 0.28);
   outline-offset: 2px;
+}
+
+/* A bond is an SVG <g>. Drawing an outline around that group produces a
+   rectangular focus box that can look like part of the molecular geometry.
+   Keep keyboard focus purely visual on the bond stroke instead. */
+.bond-control:focus-visible {
+  outline: none;
+}
+
+.bond-control:focus-visible .bond {
+  filter: drop-shadow(0 0 4px rgba(34, 118, 101, 0.52));
 }
 
 @media (max-width: 1120px) {

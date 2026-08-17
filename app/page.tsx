@@ -41,6 +41,7 @@ import {
   SKELETAL_NUMBER_BADGE_CLEARANCE,
   SKELETAL_NUMBER_BADGE_OFFSET,
 } from "./skeletal-bond-geometry";
+import { buildOpenChainSkeletalPositions } from "./skeletal-layout";
 
 type CarbonAtom = {
   id: number;
@@ -3046,18 +3047,12 @@ const ALKYL_TEMPLATES: AlkylTemplate[] = [
 ];
 
 function getDisplayPosition(atom: CarbonAtom, viewMode: ViewMode, preserveGeometry = false) {
-  if (viewMode === "condensed" || preserveGeometry) {
-    return { x: atom.x * 130, y: atom.y * 106 };
-  }
-
-  // Alternar ambos ejes convierte las cadenas rectas de la cuadrícula de
-  // construcción en el zigzag convencional de una fórmula esquelética.
-  const horizontalZigzag = Math.abs(atom.x) % 2 === 0 ? 32 : -32;
-  const verticalZigzag = Math.abs(atom.y) % 2 === 0 ? -28 : 28;
-  return {
-    x: atom.x * 130 + verticalZigzag,
-    y: atom.y * 106 + horizontalZigzag,
-  };
+  // Open skeletal chains are laid out from graph connectivity by
+  // buildOpenChainSkeletalPositions(). This direct projection is retained for
+  // condensed mode and ring structures, whose imported geometry is preserved.
+  void viewMode;
+  void preserveGeometry;
+  return { x: atom.x * 130, y: atom.y * 106 };
 }
 
 function ringIconPoints(size: number) {
@@ -3139,6 +3134,36 @@ async function resolveNameStructure(name: string): Promise<NameStructureResoluti
 }
 
 const COMPLEX_NAME_LIMIT_MESSAGE = "El motor no puede interpretar heterociclos o aminas complejas en este momento.";
+const COMPLEX_NAME_UNAVAILABLE_MESSAGE = "Nombre no disponible para estructuras complejas";
+
+export function localNamerCannotSafelyName(molecule: Molecule, analysis: Analysis) {
+  const parentAtoms = new Set(analysis.mainChain);
+  if (!parentAtoms.size) return false;
+
+  // The local namer is reliable when a secondary functional group is directly
+  // on the chosen parent skeleton. Once that group lives inside a carbon
+  // substituent, it needs its own substituent numbering (e.g. 2-oxopropyl).
+  // Returning an incomplete parent-only name is worse than explicitly saying
+  // that this structure is outside the local naming grammar.
+  return analysis.functionalGroups.some((group) => {
+    if (!group.carbonIds.length) return false;
+    const directlyOnParent = group.carbonIds.some((carbonId) => parentAtoms.has(carbonId));
+    if (directlyOnParent) return false;
+
+    // Ring carboxylic derivatives are deliberately named from an exocyclic
+    // carbonyl carbon (benzoic acid, carboxamide, carbaldehyde, etc.), so that
+    // case is supported even though the functional carbon is not a ring atom.
+    const supportedExocyclicRingSuffix = analysis.family !== "acyclic"
+      && group.kind === analysis.primaryFunctionalGroup
+      && (group.kind === "carboxylicAcid"
+        || group.kind === "ester"
+        || group.kind === "amide"
+        || group.kind === "aldehyde");
+    if (supportedExocyclicRingSuffix) return false;
+
+    return true;
+  });
+}
 
 function usesNitrogenLocants(value: string) {
   const normalized = value
@@ -3380,8 +3405,10 @@ function MoleculeHistoryPreview({ molecule }: { molecule: Molecule }) {
 export default function Home() {
   const [language, setLanguage] = useState<AppLanguage>(() => detectInitialLanguage());
   const t = (spanish: string) => uiText(language, spanish);
-  const localizedIupac = (name: string) =>
-    language === "en" ? translateSpanishIupacToOpsin(name) || name : name;
+  const localizedIupac = (name: string) => {
+    if (name === COMPLEX_NAME_UNAVAILABLE_MESSAGE) return t(COMPLEX_NAME_UNAVAILABLE_MESSAGE);
+    return language === "en" ? translateSpanishIupacToOpsin(name) || name : name;
+  };
   const localizedCommonAlkylName = (name: string) => {
     if (language === "es") return name;
     const commonNames: Record<string, string> = {
@@ -3597,10 +3624,18 @@ export default function Home() {
   const valenceAlertTimer = useRef<number | null>(null);
 
   const adjacency = useMemo(() => buildAdjacency(molecule), [molecule]);
-  const analysis = useMemo(() => {
-    const calculated = analyzeMolecule(molecule, commonAlkylNameSelections);
-    return sourceNameOverride ? { ...calculated, name: sourceNameOverride } : calculated;
-  }, [molecule, commonAlkylNameSelections, sourceNameOverride]);
+  const calculatedAnalysis = useMemo(
+    () => analyzeMolecule(molecule, commonAlkylNameSelections),
+    [molecule, commonAlkylNameSelections],
+  );
+  const localSuggestedNameUnavailable = sourceNameOverride === null
+    && localNamerCannotSafelyName(molecule, calculatedAnalysis);
+  const analysis = useMemo(
+    () => sourceNameOverride
+      ? { ...calculatedAnalysis, name: sourceNameOverride }
+      : calculatedAnalysis,
+    [calculatedAnalysis, sourceNameOverride],
+  );
   const automaticNumberingAvailable = sourceNameOverride === null;
   const effectiveShowNumbering = showNumbering && automaticNumberingAvailable;
   const selectedAtom = molecule.atoms.find((atom) => atom.id === selectedId) ?? molecule.atoms[0];
@@ -3610,12 +3645,16 @@ export default function Home() {
     [analysis],
   );
   const stereochemicalName = useMemo(
-    () => formatStereochemicalName(molecule, analysis.mainChain, analysis.name),
-    [analysis.mainChain, analysis.name, molecule],
+    () => localSuggestedNameUnavailable
+      ? COMPLEX_NAME_UNAVAILABLE_MESSAGE
+      : formatStereochemicalName(molecule, analysis.mainChain, analysis.name),
+    [analysis.mainChain, analysis.name, localSuggestedNameUnavailable, molecule],
   );
   const aromaticStereochemicalNames = useMemo(
-    () => getAromaticStereochemicalNameOptions(stereochemicalName, analysis.family),
-    [analysis.family, stereochemicalName],
+    () => localSuggestedNameUnavailable
+      ? null
+      : getAromaticStereochemicalNameOptions(stereochemicalName, analysis.family),
+    [analysis.family, localSuggestedNameUnavailable, stereochemicalName],
   );
   const showAromaticTechnicalName = Boolean(
     aromaticStereochemicalNames && technicalAromaticMolecule === molecule,
@@ -4015,6 +4054,7 @@ export default function Home() {
       let normalizedInput = submittedName.toLocaleLowerCase("es").replace(/\s+/g, "");
       let engineLabel = "OPSIN + OpenChemLib";
       let serviceWarning = "";
+      let advancedNameResolved = false;
 
       try {
         const data = await resolveNameStructure(submittedName);
@@ -4023,6 +4063,7 @@ export default function Home() {
         const converted = moleculeFromSmiles(data.smiles);
         if (!converted.ok) throw new Error(converted.error);
         next = converted.molecule;
+        advancedNameResolved = true;
         if (data.source === "integrated-fallback") {
           engineLabel = "OpenChemLib y el respaldo integrado";
         }
@@ -4044,7 +4085,9 @@ export default function Home() {
       }
 
       const generatedAnalysis = analyzeMolecule(next, enabledAliases);
-      const resultName = preserveSourceName ? submittedName : generatedAnalysis.name;
+      const preserveTrustedSourceName = advancedNameResolved
+        && (preserveSourceName || localNamerCannotSafelyName(next, generatedAnalysis));
+      const resultName = preserveTrustedSourceName ? submittedName : generatedAnalysis.name;
       const commonName = generatedAnalysis.commonName
         ? `; también se conoce como ${generatedAnalysis.commonName}`
         : "";
@@ -4055,7 +4098,10 @@ export default function Home() {
         `Estructura creada desde «${submittedName}». Puedes seguir editándola átomo por átomo.`,
       );
       setReasoningSourceName(submittedName);
-      setSourceNameOverride(preserveSourceName ? submittedName : null);
+      // If OPSIN/OpenChemLib successfully parsed a structure whose nested
+      // functional groups exceed the local naming grammar, keep the validated
+      // source name rather than replacing it with an incomplete suggestion.
+      setSourceNameOverride(preserveTrustedSourceName ? submittedName : null);
       setSelectedId(next.atoms[0].id);
       setCommonAlkylNameSelections(enabledAliases);
       setUseSimplifiedRingUnsaturationName(omittedRingLocant);
@@ -5126,9 +5172,11 @@ export default function Home() {
     );
   };
 
-  const displayPositions = new Map(
-    molecule.atoms.map((atom) => [atom.id, getDisplayPosition(atom, viewMode, Boolean(molecule.rings?.length))]),
-  );
+  const displayPositions = viewMode === "skeletal" && !molecule.rings?.length
+    ? buildOpenChainSkeletalPositions(molecule, analysis.mainChain)
+    : new Map(
+        molecule.atoms.map((atom) => [atom.id, getDisplayPosition(atom, viewMode, Boolean(molecule.rings?.length))]),
+      );
   const skeletalNumberBadgeOffsets = new Map(
     molecule.atoms.map((atom) => {
       const containingRing = molecule.rings?.find((ring) => ring.atomIds.includes(atom.id));
