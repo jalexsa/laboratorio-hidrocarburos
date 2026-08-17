@@ -196,3 +196,35 @@ test("the reported fluorinated diketone keeps an integrated fallback", async () 
   assert.equal(result.value.source, "integrated-fallback");
   assert.equal(result.value.smiles, "O=C1CC(F)(CC(=O)C)CCC1");
 });
+
+test("nitro and nitrile Spanish names translate to OPSIN English", () => {
+  assert.equal(translateSpanishIupacToOpsin("2-nitropropano"), "2-nitropropane");
+  assert.equal(translateSpanishIupacToOpsin("butanonitrilo"), "butanenitrile");
+});
+
+test("nitropropane and butanenitrile retain offline fallbacks", async () => {
+  const names = [
+    ["2-nitropropano", "CC([N+](=O)[O-])C"],
+    ["butanonitrilo", "CCCC#N"],
+  ];
+
+  for (const [name, smiles] of names) {
+    const result = await resolveNameWithOpsin(name, {
+      fetchImpl: async () => {
+        throw new TypeError("Failed to fetch");
+      },
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.value.source, "integrated-fallback");
+    assert.equal(result.value.smiles, smiles);
+  }
+});
+
+test("OpenChemLib admits the formal-charge pattern used by nitro groups", () => {
+  const nitro = moleculeFromSmiles("CC([N+](=O)[O-])C");
+  assert.equal(nitro.ok, true, nitro.ok ? undefined : nitro.error);
+  const nitrogen = nitro.molecule.atoms.find((atom) => atom.element === "N");
+  const negativeOxygen = nitro.molecule.atoms.find((atom) => atom.element === "O" && atom.charge === -1);
+  assert.equal(nitrogen?.charge, 1);
+  assert.ok(negativeOxygen);
+});

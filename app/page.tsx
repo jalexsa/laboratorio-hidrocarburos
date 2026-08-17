@@ -48,6 +48,7 @@ type CarbonAtom = {
   x: number;
   y: number;
   element?: ChemicalElement;
+  charge?: number;
 };
 
 type ChemicalElement = "C" | "O" | "N" | "F" | "Cl" | "Br" | "I";
@@ -120,7 +121,9 @@ type FunctionalGroupKind =
   | "carboxylicAcid"
   | "ester"
   | "amine"
-  | "amide";
+  | "amide"
+  | "nitrile"
+  | "nitro";
 
 type FunctionalGroup = {
   id: string;
@@ -140,7 +143,7 @@ type FunctionalGroupTemplate = {
   category: "oxygen" | "nitrogen" | "halogen";
   detail: string;
   kind: FunctionalGroupKind;
-  atoms: { element: ChemicalElement; x: number; y: number }[];
+  atoms: { element: ChemicalElement; x: number; y: number; charge?: number }[];
   bonds: [number, number, BondOrder][];
   requirement: "open" | "terminal-carbon" | "internal-carbon";
 };
@@ -426,7 +429,12 @@ const getAtom = (atomId: number, molecule: Molecule) =>
 
 const getValenceLimit = (atomId: number, molecule: Molecule) => {
   const atom = getAtom(atomId, molecule);
-  return atom ? elementValences[getElement(atom)] : 0;
+  if (!atom) return 0;
+  const element = getElement(atom);
+  const charge = atom.charge ?? 0;
+  if (element === "N" && charge === 1) return 4;
+  if (element === "O" && charge === -1) return 1;
+  return elementValences[element];
 };
 
 const getValenceUsed = (atomId: number, molecule: Molecule) =>
@@ -781,16 +789,20 @@ const functionalGroupLabels: Record<FunctionalGroupKind, string> = {
   ester: "Éster",
   amine: "Amina",
   amide: "Amida",
+  nitrile: "Nitrilo",
+  nitro: "Nitro",
 };
 
 const functionalGroupPriority: Record<FunctionalGroupKind, number> = {
-  carboxylicAcid: 9,
-  ester: 8,
-  amide: 7,
+  carboxylicAcid: 10,
+  ester: 9,
+  amide: 8,
+  nitrile: 7,
   aldehyde: 6,
   ketone: 5,
   alcohol: 4,
   amine: 3,
+  nitro: 1,
   ether: 1,
   halogen: 1,
 };
@@ -896,6 +908,32 @@ const FUNCTIONAL_GROUP_TEMPLATES: FunctionalGroupTemplate[] = [
     ],
     bonds: [[0, 1, 2], [0, 2, 1]],
     requirement: "terminal-carbon",
+  },
+  {
+    id: "nitrile",
+    label: "Nitrilo",
+    shortFormula: "–C≡N",
+    category: "nitrogen",
+    detail: "grupo ciano terminal",
+    kind: "nitrile",
+    atoms: [{ element: "N", x: 1, y: 0 }],
+    bonds: [[0, 1, 3]],
+    requirement: "terminal-carbon",
+  },
+  {
+    id: "nitro",
+    label: "Nitro",
+    shortFormula: "–NO₂",
+    category: "nitrogen",
+    detail: "grupo nitro",
+    kind: "nitro",
+    atoms: [
+      { element: "N", x: 1, y: 0, charge: 1 },
+      { element: "O", x: 2, y: -0.75 },
+      { element: "O", x: 2, y: 0.75, charge: -1 },
+    ],
+    bonds: [[0, 1, 1], [1, 2, 2], [1, 3, 1]],
+    requirement: "open",
   },
   ...(["F", "Cl", "Br", "I"] as ChemicalElement[]).map((element) => ({
     id: `halo-${element.toLowerCase()}`,
@@ -1891,7 +1929,49 @@ function detectFunctionalGroups(molecule: Molecule): FunctionalGroup[] {
   molecule.atoms.forEach((atom) => {
     const element = getElement(atom);
     if (element !== "N" || claimedHeteroAtoms.has(atom.id)) return;
-    const carbonNeighbors = atomNeighbors(atom.id, molecule)
+    const neighbors = atomNeighbors(atom.id, molecule);
+    const nitrileCarbon = neighbors.find(
+      (neighbor) => neighbor.order === 3 && elementAt(neighbor.atomId) === "C",
+    );
+    if (nitrileCarbon) {
+      groups.push({
+        id: `nitrile-${atom.id}`,
+        kind: "nitrile",
+        label: functionalGroupLabels.nitrile,
+        atomIds: [nitrileCarbon.atomId, atom.id],
+        carbonIds: [nitrileCarbon.atomId],
+        carbonId: nitrileCarbon.atomId,
+        heteroAtomId: atom.id,
+      });
+      claimedHeteroAtoms.add(atom.id);
+      return;
+    }
+
+    const nitroCarbon = neighbors.find(
+      (neighbor) => neighbor.order === 1 && elementAt(neighbor.atomId) === "C",
+    );
+    const nitroOxygens = neighbors.filter(
+      (neighbor) => elementAt(neighbor.atomId) === "O" && (neighbor.order === 1 || neighbor.order === 2),
+    );
+    const hasNitroBondPattern = nitroOxygens.length === 2
+      && nitroOxygens.some((neighbor) => neighbor.order === 2)
+      && nitroOxygens.some((neighbor) => neighbor.order === 1);
+    if (nitroCarbon && hasNitroBondPattern) {
+      groups.push({
+        id: `nitro-${atom.id}`,
+        kind: "nitro",
+        label: functionalGroupLabels.nitro,
+        atomIds: [nitroCarbon.atomId, atom.id, ...nitroOxygens.map((neighbor) => neighbor.atomId)],
+        carbonIds: [nitroCarbon.atomId],
+        carbonId: nitroCarbon.atomId,
+        heteroAtomId: atom.id,
+      });
+      claimedHeteroAtoms.add(atom.id);
+      nitroOxygens.forEach((neighbor) => claimedHeteroAtoms.add(neighbor.atomId));
+      return;
+    }
+
+    const carbonNeighbors = neighbors
       .filter((neighbor) => neighbor.order === 1 && elementAt(neighbor.atomId) === "C")
       .map((neighbor) => neighbor.atomId);
     if (!carbonNeighbors.length) return;
@@ -1932,6 +2012,7 @@ const suffixFunctionalGroups = new Set<FunctionalGroupKind>([
   "carboxylicAcid",
   "ester",
   "amide",
+  "nitrile",
   "aldehyde",
   "ketone",
   "alcohol",
@@ -2031,6 +2112,10 @@ function functionalPrefixSubstituents(
       addPrefix("oxo");
     } else if (group.kind === "amine") {
       addPrefix("amino");
+    } else if (group.kind === "nitrile") {
+      addPrefix("ciano");
+    } else if (group.kind === "nitro") {
+      addPrefix("nitro");
     } else if (group.kind === "aldehyde") {
       addPrefix(directLocant ? "oxo" : "formil");
     } else if (group.kind === "carboxylicAcid") {
@@ -2101,6 +2186,11 @@ function makeFunctionalParentName(
     return count > 1
       ? `${hydrocarbonName}${suffixMultiplier(count, "amida")}amida`
       : `${stem}amida`;
+  }
+  if (kind === "nitrile") {
+    return count > 1
+      ? `${hydrocarbonName}${suffixMultiplier(count, "nitrilo")}nitrilo`
+      : `${hydrocarbonName}nitrilo`;
   }
   if (kind === "aldehyde") {
     return count > 1
@@ -2354,6 +2444,11 @@ function makeRingFunctionalParentName(
         ? "benzamida"
         : `benceno-${locantText}-${suffixMultiplier(count, "carboxamida")}carboxamida`;
     }
+    if (primaryKind === "nitrile") {
+      return count === 1
+        ? "benzonitrilo"
+        : `benceno-${locantText}-${suffixMultiplier(count, "carbonitrilo")}carbonitrilo`;
+    }
     if (primaryKind === "aldehyde") {
       return count === 1
         ? "benzaldehído"
@@ -2378,6 +2473,11 @@ function makeRingFunctionalParentName(
       return count === 1
         ? `${stem}ocarboxamida`
         : `${base}-${locantText}-${suffixMultiplier(count, "carboxamida")}carboxamida`;
+    }
+    if (primaryKind === "nitrile") {
+      return count === 1
+        ? `${stem}ocarbonitrilo`
+        : `${base}-${locantText}-${suffixMultiplier(count, "carbonitrilo")}carbonitrilo`;
     }
     if (primaryKind === "aldehyde") {
       return count === 1
@@ -2732,6 +2832,7 @@ export function buildIupacReasoningSteps(
     "carboxylicAcid",
     "ester",
     "amide",
+    "nitrile",
     "aldehyde",
   ]);
 
@@ -3158,6 +3259,7 @@ export function localNamerCannotSafelyName(molecule: Molecule, analysis: Analysi
       && (group.kind === "carboxylicAcid"
         || group.kind === "ester"
         || group.kind === "amide"
+        || group.kind === "nitrile"
         || group.kind === "aldehyde");
     if (supportedExocyclicRingSuffix) return false;
 
@@ -3389,11 +3491,12 @@ function MoleculeHistoryPreview({ molecule }: { molecule: Molecule }) {
       {molecule.atoms.map((atom) => {
         const position = positions.get(atom.id)!;
         const element = atom.element ?? "C";
+        const chargeText = atom.charge === 1 ? "+" : atom.charge === -1 ? "−" : "";
         return (
           <g key={atom.id} transform={`translate(${position.x} ${position.y})`}>
             <circle className={element === "C" ? "history-carbon" : "history-hetero"} r={element === "C" ? 3.5 : 7} />
             {element !== "C" && (
-              <text textAnchor="middle" dominantBaseline="central">{element}</text>
+              <text textAnchor="middle" dominantBaseline="central">{element}{chargeText}</text>
             )}
           </g>
         );
@@ -4443,6 +4546,7 @@ export default function Home() {
       ...position,
       id: idMap[index],
       element: template.atoms[index].element,
+      ...(template.atoms[index].charge ? { charge: template.atoms[index].charge } : {}),
     }));
     const addedBonds = template.bonds.map(([from, to, order]) => [
       from === 0 ? selectedAtom.id : idMap[from - 1],
@@ -4588,7 +4692,7 @@ export default function Home() {
     const next: Molecule = {
       ...molecule,
       atoms: molecule.atoms.map((atom) =>
-        atom.id === selectedAtom.id ? { ...atom, element } : { ...atom },
+        atom.id === selectedAtom.id ? { ...atom, element, charge: undefined } : { ...atom },
       ),
     };
     const hydrogens = getImplicitHydrogens(selectedAtom.id, next);
@@ -5928,7 +6032,9 @@ export default function Home() {
                 const hydrogenSubscript = showHydrogenOnLabel && hydrogenCount > 1
                   ? hydrogenCount
                   : undefined;
-                const heteroBadgeWidth = atomLabel.length >= 3 ? 40 : atomLabel.length === 2 ? 31 : 24;
+                const chargeText = atom.charge === 1 ? "+" : atom.charge === -1 ? "−" : "";
+                const visibleLabelLength = atomLabel.length + (chargeText ? 1 : 0);
+                const heteroBadgeWidth = visibleLabelLength >= 3 ? 40 : visibleLabelLength === 2 ? 31 : 24;
                 return (
                   <g
                     key={atom.id}
@@ -6009,6 +6115,9 @@ export default function Home() {
                                 {hydrogenSubscript}
                               </tspan>
                             )}
+                            {chargeText && (
+                              <tspan className="atom-charge" baselineShift="super">{chargeText}</tspan>
+                            )}
                           </text>
                           {effectiveShowNumbering && chainNumber && (
                             <g
@@ -6031,6 +6140,9 @@ export default function Home() {
                             <tspan className="hydrogen-subscript" baselineShift="sub">
                               {hydrogenSubscript}
                             </tspan>
+                          )}
+                          {chargeText && (
+                            <tspan className="atom-charge" baselineShift="super">{chargeText}</tspan>
                           )}
                         </text>
                         {effectiveShowNumbering && chainNumber && (
@@ -6354,7 +6466,7 @@ export default function Home() {
 
               {([
                 { id: "oxygen", title: "Grupos con oxígeno", detail: "Alcoholes, carbonilos, ácidos y derivados" },
-                { id: "nitrogen", title: "Grupos con nitrógeno", detail: "Aminas y amidas" },
+                { id: "nitrogen", title: "Grupos con nitrógeno", detail: "Aminas, amidas, nitrilos y nitrocompuestos" },
                 { id: "halogen", title: "Derivados halogenados", detail: "F, Cl, Br e I se nombran como prefijos" },
               ] as const).map((category) => (
                 <div className={`functional-section functional-${category.id}`} key={category.id}>

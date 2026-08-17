@@ -32,6 +32,8 @@ const embeddedSmilesFallback: Record<string, string> = {
   "N-cyclohexyl-N-methylpropan-2-amine": "C1(CCCCC1)N(C(C)C)C",
   "N-methylethanamine": "CCNC",
   "N,N-dimethylethanamine": "CCN(C)C",
+  "2-nitropropane": "CC([N+](=O)[O-])C",
+  "butanenitrile": "CCCC#N",
   "3-fluoro-3-(2-oxopropyl)cyclohexan-1-one": "O=C1CC(F)(CC(=O)C)CCC1",
   "2-methylpropanoic acid": "CC(C)C(=O)O",
   "3-(2-oxopropyl)cyclohexanone": "O=C(CC1CC(CCC1)=O)C",

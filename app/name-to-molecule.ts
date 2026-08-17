@@ -7,6 +7,7 @@ export type GeneratedAtom = {
   x: number;
   y: number;
   element?: "C" | "O" | "N" | "F" | "Cl" | "Br" | "I";
+  charge?: number;
 };
 
 export type GeneratedRing = {
