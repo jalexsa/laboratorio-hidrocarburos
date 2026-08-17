@@ -210,3 +210,55 @@ test("expresa como prefijo una función de menor prioridad", () => {
   ]);
   assert.equal(analyzeMolecule(aromatic).name, "ácido 3-carbamoilbenzoico");
 });
+
+test("detects every functional group in a ring with a nested oxo substituent", async () => {
+  const module = await server.ssrLoadModule("/app/page.tsx");
+  const { localNamerCannotSafelyName } = module;
+  const molecule = {
+    atoms: [
+      { id: 1, x: 1, y: 0 },
+      { id: 2, x: 0.5, y: 0.86 },
+      { id: 3, x: -0.5, y: 0.86 },
+      { id: 4, x: -1, y: 0 },
+      { id: 5, x: -0.5, y: -0.86 },
+      { id: 6, x: 0.5, y: -0.86 },
+      { id: 7, x: 1.7, y: 0, element: "O" },
+      { id: 8, x: -0.5, y: 1.7, element: "F" },
+      { id: 9, x: -1.3, y: 1.3 },
+      { id: 10, x: -2.2, y: 1.3 },
+      { id: 11, x: -3.1, y: 1.3 },
+      { id: 12, x: -2.2, y: 2.1, element: "O" },
+    ],
+    bonds: [
+      [1, 2, 1], [2, 3, 1], [3, 4, 1], [4, 5, 1], [5, 6, 1], [6, 1, 1],
+      [1, 7, 2],
+      [3, 8, 1],
+      [3, 9, 1], [9, 10, 1], [10, 11, 1], [10, 12, 2],
+    ],
+    rings: [{ id: 1, kind: "cycloalkane", atomIds: [1, 2, 3, 4, 5, 6] }],
+  };
+
+  const analysis = analyzeMolecule(molecule);
+  assert.equal(analysis.functionalGroups.filter((group) => group.kind === "ketone").length, 2);
+  assert.equal(analysis.functionalGroups.filter((group) => group.kind === "halogen").length, 1);
+  assert.equal(localNamerCannotSafelyName(molecule, analysis), true);
+});
+
+test("local nomenclature handles N-methyl and N,N-dimethyl ethanamine graphs", () => {
+  const secondary = {
+    atoms: [
+      { id: 1, x: 0, y: 0 },
+      { id: 2, x: 1, y: 0 },
+      { id: 3, x: 2, y: 0, element: "N" },
+      { id: 4, x: 2, y: 1 },
+    ],
+    bonds: [[1, 2, 1], [2, 3, 1], [3, 4, 1]],
+  };
+  const tertiary = {
+    atoms: [...secondary.atoms, { id: 5, x: 2, y: -1 }],
+    bonds: [...secondary.bonds, [3, 5, 1]],
+  };
+
+  assert.equal(analyzeMolecule(secondary).name, "N-metiletanamina");
+  assert.equal(analyzeMolecule(tertiary).name, "N,N-dimetiletanamina");
+});

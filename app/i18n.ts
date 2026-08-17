@@ -122,6 +122,7 @@ const ENGLISH_UI: Record<string, string> = {
   "Aminas y amidas": "Amines and amides",
   "Análisis en tiempo real": "Real-time analysis",
   "Nombre IUPAC sugerido": "Suggested IUPAC name",
+  "Nombre no disponible para estructuras complejas": "Name unavailable for complex structures",
   "Estructura válida": "Valid structure",
   "Respuesta oculta": "Answer hidden",
   "Nombre tradicional:": "Common name:",

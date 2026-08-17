@@ -152,3 +152,47 @@ test("complex N-substituted names retain an integrated fallback", async () => {
     assert.equal(result.value.smiles, smiles);
   }
 });
+
+test("simple N-substituted ethanamines translate to valid OPSIN English names", () => {
+  assert.equal(
+    translateSpanishIupacToOpsin("N-metiletanamina"),
+    "N-methylethanamine",
+  );
+  assert.equal(
+    translateSpanishIupacToOpsin("N,N-dimetiletanamina"),
+    "N,N-dimethylethanamine",
+  );
+});
+
+test("N-methylethanamine and N,N-dimethylethanamine retain offline fallbacks", async () => {
+  const names = [
+    ["N-metiletanamina", "CCNC"],
+    ["N,N-dimetiletanamina", "CCN(C)C"],
+  ];
+
+  for (const [name, smiles] of names) {
+    const result = await resolveNameWithOpsin(name, {
+      fetchImpl: async () => {
+        throw new TypeError("Failed to fetch");
+      },
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.value.source, "integrated-fallback");
+    assert.equal(result.value.smiles, smiles);
+  }
+});
+
+test("the reported fluorinated diketone keeps an integrated fallback", async () => {
+  const result = await resolveNameWithOpsin(
+    "3-fluoro-3-(2-oxopropyl)cyclohexan-1-one",
+    {
+      fetchImpl: async () => {
+        throw new TypeError("Failed to fetch");
+      },
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.value.source, "integrated-fallback");
+  assert.equal(result.value.smiles, "O=C1CC(F)(CC(=O)C)CCC1");
+});

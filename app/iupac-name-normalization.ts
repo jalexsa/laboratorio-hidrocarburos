@@ -81,6 +81,20 @@ function translateCore(value: string) {
     .replace(/\bet(?=an|en|in)/g, "eth");
 
   translated = translated
+    // Parent-chain amines need the English alkane root even when an N-alkyl
+    // prefix is immediately attached (for example N-metiletanamina). Word-
+    // boundary replacements cannot see the "et" in methyletanamina, so these
+    // suffix bridges are intentionally applied before the generic -amine rule.
+    .replace(/metanamina$/g, "methanamine")
+    .replace(/etanamina$/g, "ethanamine")
+    .replace(/propanamina$/g, "propanamine")
+    .replace(/butanamina$/g, "butanamine")
+    .replace(/pentanamina$/g, "pentanamine")
+    .replace(/hexanamina$/g, "hexanamine")
+    .replace(/heptanamina$/g, "heptanamine")
+    .replace(/octanamina$/g, "octanamine")
+    .replace(/nonanamina$/g, "nonanamine")
+    .replace(/decanamina$/g, "decanamine")
     .replace(/anodial$/g, "anedial")
     .replace(/anodiamida$/g, "anediamide")
     .replace(/anodiamina$/g, "anediamine")
