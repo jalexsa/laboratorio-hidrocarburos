@@ -42,6 +42,7 @@ import {
   SKELETAL_NUMBER_BADGE_OFFSET,
 } from "./skeletal-bond-geometry";
 import { buildOpenChainSkeletalPositions } from "./skeletal-layout";
+import { readSmilesFileRecord } from "./smiles-file";
 
 type CarbonAtom = {
   id: number;
@@ -3413,6 +3414,21 @@ function downloadChemistryDocument(document: ChemistryDocument, fileName: string
   window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
 }
 
+function downloadSmilesFile(smiles: string, fileName: string) {
+  const blob = new Blob([`${smiles.trim()}\n`], {
+    type: "chemical/x-daylight-smiles;charset=utf-8",
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = window.document.createElement("a");
+  anchor.href = url;
+  anchor.download = `${safeChemistryFileName(fileName)}.smi`;
+  anchor.style.display = "none";
+  window.document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+}
+
 function isPortableStructure(value: unknown): value is PortableStructure {
   if (!value || typeof value !== "object") return false;
   const item = value as Partial<PortableStructure>;
@@ -3726,6 +3742,9 @@ export default function Home() {
   const [iupacInput, setIupacInput] = useState("");
   const [nameBuilderBusy, setNameBuilderBusy] = useState(false);
   const [nameBuilderFeedback, setNameBuilderFeedback] = useState<NameBuilderFeedback | null>(null);
+  const [smilesPanelOpen, setSmilesPanelOpen] = useState(false);
+  const [smilesImporting, setSmilesImporting] = useState(false);
+  const [smilesFeedback, setSmilesFeedback] = useState<HistoryTransferNotice | null>(null);
   const [reasoningSourceName, setReasoningSourceName] = useState<string | null>(null);
   const [sourceNameOverride, setSourceNameOverride] = useState<string | null>(null);
   const lastPersistedSignature = useRef("");
@@ -5027,6 +5046,93 @@ export default function Home() {
     });
   };
 
+  const exportCurrentSmiles = async () => {
+    setSmilesFeedback(null);
+    try {
+      const { moleculeToSmiles } = await import("./openchemlib-adapter");
+      const result = moleculeToSmiles(molecule);
+      if (!result.ok) throw new Error(result.error);
+      downloadSmilesFile(result.smiles, canonicalIupacName);
+      setSmilesFeedback({
+        kind: "success",
+        message: t("La molécula actual se exportó como archivo .smi compatible con SMILES."),
+      });
+    } catch (error) {
+      setSmilesFeedback({
+        kind: "error",
+        message: error instanceof Error
+          ? localizedDynamicText(error.message)
+          : t("No fue posible exportar esta estructura como SMILES."),
+      });
+    }
+  };
+
+  const importSmilesDocument = async (event: ChangeEvent<HTMLInputElement>) => {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    if (!file) return;
+
+    setSmilesImporting(true);
+    setSmilesFeedback(null);
+    try {
+      if (file.size > 1_000_000) {
+        throw new Error(t("El archivo SMILES supera el límite de 1 MB."));
+      }
+
+      const record = readSmilesFileRecord(await file.text());
+      const { moleculeFromSmiles } = await import("./openchemlib-adapter");
+      const converted = moleculeFromSmiles(record.smiles);
+      if (!converted.ok) throw new Error(t(converted.error));
+
+      const next = converted.molecule;
+      const importedAnalysis = analyzeMolecule(next);
+      const suggestedName = localNamerCannotSafelyName(next, importedAnalysis)
+        ? COMPLEX_NAME_UNAVAILABLE_MESSAGE
+        : importedAnalysis.name;
+      const committed = commit(
+        next,
+        language === "en"
+          ? `Structure imported from SMILES file ${file.name}. You can keep editing it atom by atom.`
+          : `Estructura importada desde el archivo SMILES ${file.name}. Puedes seguir editándola átomo por átomo.`,
+      );
+      if (!committed) {
+        throw new Error(t("El SMILES fue interpretado, pero el canvas lo bloqueó por una validación de valencia."));
+      }
+
+      setSelectedId(next.atoms[0].id);
+      setCommonAlkylNameSelections([]);
+      setUseSimplifiedRingUnsaturationName(false);
+      setShowIupacName(true);
+      setRingInsertMode("replace");
+      setShowAlkylPalette(false);
+      setShowRingPalette(false);
+      setShowFunctionalPalette(false);
+      setNameBuilderFeedback(null);
+
+      const extraRecords = record.ignoredRecordCount > 0
+        ? language === "en"
+          ? ` The file contains ${record.ignoredRecordCount + 1} records; SciU imported the first molecule.`
+          : ` El archivo contiene ${record.ignoredRecordCount + 1} registros; SciU importó la primera molécula.`
+        : "";
+      setSmilesFeedback({
+        kind: "success",
+        message: language === "en"
+          ? `SMILES imported with OpenChemLib. Suggested IUPAC name: ${localizedIupac(suggestedName)}.${extraRecords}`
+          : `SMILES importado con OpenChemLib. Nombre IUPAC sugerido: ${suggestedName}.${extraRecords}`,
+      });
+    } catch (error) {
+      setSmilesFeedback({
+        kind: "error",
+        message: error instanceof Error
+          ? localizedDynamicText(error.message)
+          : t("No fue posible importar este archivo SMILES."),
+      });
+    } finally {
+      setSmilesImporting(false);
+      input.value = "";
+    }
+  };
+
   const importChemistryDocument = async (event: ChangeEvent<HTMLInputElement>) => {
     const input = event.currentTarget;
     const file = input.files?.[0];
@@ -5714,6 +5820,19 @@ export default function Home() {
                 <span aria-hidden="true">Aa</span>
                 {t("Por nombre")}
               </button>
+              <button
+                className={`name-builder-toggle smiles-toggle ${smilesPanelOpen ? "active" : ""}`}
+                onClick={() => {
+                  setSmilesPanelOpen((open) => !open);
+                  setSmilesFeedback(null);
+                }}
+                aria-expanded={smilesPanelOpen}
+                aria-controls="smiles-interop-panel"
+                title={t("Importar o exportar la molécula mediante SMILES")}
+              >
+                <span aria-hidden="true">S</span>
+                SMILES
+              </button>
               <div className="view-mode-switch" role="group" aria-label={t("Tipo de representación molecular")}>
                 <button
                   className={viewMode === "condensed" ? "active" : ""}
@@ -5819,6 +5938,49 @@ export default function Home() {
                 </div>
               )}
             </form>
+          )}
+
+          {smilesPanelOpen && (
+            <section id="smiles-interop-panel" className="smiles-interop-panel" aria-label={t("Compatibilidad SMILES")}>
+              <div className="smiles-interop-intro">
+                <span className="smiles-interop-mark" aria-hidden="true">S</span>
+                <div>
+                  <strong>{t("Compatibilidad SMILES")}</strong>
+                  <small>{t(".quimica sigue siendo el formato nativo de SciU; SMILES permite intercambiar la molécula con otras herramientas químicas.")}</small>
+                </div>
+                <span className="smiles-interop-scope">OpenChemLib</span>
+              </div>
+
+              <div className="smiles-interop-actions">
+                <button type="button" onClick={exportCurrentSmiles}>
+                  <span aria-hidden="true">↓</span>
+                  {t("Exportar SMILES (.smi)")}
+                </button>
+                <label className={smilesImporting ? "disabled" : ""}>
+                  <span aria-hidden="true">↑</span>
+                  {smilesImporting ? t("Importando…") : t("Importar SMILES")}
+                  <input
+                    type="file"
+                    accept=".smi,.smiles,.txt,text/plain,chemical/x-daylight-smiles"
+                    onChange={importSmilesDocument}
+                    disabled={smilesImporting}
+                    aria-label={t("Importar archivo SMILES al canvas")}
+                  />
+                </label>
+              </div>
+
+              <div className="smiles-format-note">
+                <code>.smi</code>
+                <span>{t("Se exporta una cadena SMILES isomérica en texto plano. También se aceptan archivos .smiles y .txt al importar.")}</span>
+              </div>
+
+              {smilesFeedback && (
+                <div className={`smiles-feedback ${smilesFeedback.kind}`} role={smilesFeedback.kind === "error" ? "alert" : "status"}>
+                  <span aria-hidden="true">{smilesFeedback.kind === "success" ? "✓" : "!"}</span>
+                  <p>{smilesFeedback.message}</p>
+                </div>
+              )}
+            </section>
           )}
 
           <div

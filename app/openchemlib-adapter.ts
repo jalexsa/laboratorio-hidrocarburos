@@ -1,4 +1,4 @@
-import { SmilesParser } from "openchemlib";
+import { Molecule as OCLMolecule, SmilesParser } from "openchemlib";
 import type {
   GeneratedAtom,
   GeneratedBond,
@@ -11,6 +11,76 @@ type SupportedElement = NonNullable<GeneratedAtom["element"]>;
 export type OpenChemLibBuildResult =
   | { ok: true; molecule: GeneratedMolecule }
   | { ok: false; error: string };
+
+export type OpenChemLibSmilesExportResult =
+  | { ok: true; smiles: string }
+  | { ok: false; error: string };
+
+
+const atomicNumberByElement: Record<SupportedElement, number> = {
+  C: 6,
+  N: 7,
+  O: 8,
+  F: 9,
+  Cl: 17,
+  Br: 35,
+  I: 53,
+};
+
+/**
+ * Converts the editable SciU molecular graph into an isomeric SMILES string.
+ * OpenChemLib derives implicit hydrogens from the editable graph. If stereo
+ * parity is present in the OpenChemLib molecule, toIsomericSmiles preserves it.
+ */
+export function moleculeToSmiles(molecule: GeneratedMolecule): OpenChemLibSmilesExportResult {
+  if (!molecule.atoms.length) {
+    return { ok: false, error: "No hay una molécula para exportar como SMILES." };
+  }
+
+  try {
+    const oclMolecule = new OCLMolecule(
+      Math.max(64, molecule.atoms.length + 16),
+      Math.max(64, molecule.bonds.length + 16),
+    );
+    const atomIdToIndex = new Map<number, number>();
+
+    for (const atom of molecule.atoms) {
+      const element = atom.element ?? "C";
+      const atomicNumber = atomicNumberByElement[element];
+      if (!atomicNumber) {
+        return { ok: false, error: `El elemento ${element} no puede exportarse como SMILES desde este canvas.` };
+      }
+      const atomIndex = oclMolecule.addAtom(atomicNumber);
+      atomIdToIndex.set(atom.id, atomIndex);
+      // The canvas uses a downward-positive Y axis. Mirroring Y keeps the
+      // chemical drawing orientation conventional without changing E/Z.
+      oclMolecule.setAtomX(atomIndex, atom.x);
+      oclMolecule.setAtomY(atomIndex, -atom.y);
+      if (atom.charge) oclMolecule.setAtomCharge(atomIndex, atom.charge);
+    }
+
+    for (const [leftId, rightId, order = 1] of molecule.bonds) {
+      const left = atomIdToIndex.get(leftId);
+      const right = atomIdToIndex.get(rightId);
+      if (left === undefined || right === undefined) {
+        return { ok: false, error: "La estructura contiene un enlace con átomos inexistentes." };
+      }
+      const bondIndex = oclMolecule.addBond(left, right);
+      oclMolecule.setBondOrder(bondIndex, order);
+    }
+
+    oclMolecule.setFragment(false);
+    oclMolecule.ensureHelperArrays(OCLMolecule.cHelperParities);
+    oclMolecule.validate();
+    const smiles = oclMolecule.toIsomericSmiles().trim();
+    if (!smiles) {
+      return { ok: false, error: "OpenChemLib no pudo generar el SMILES de esta estructura." };
+    }
+    return { ok: true, smiles };
+  } catch {
+    return { ok: false, error: "OpenChemLib no pudo generar el SMILES de esta estructura." };
+  }
+}
 
 const supportedElements = new Map<number, SupportedElement>([
   [6, "C"],
