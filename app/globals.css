@@ -2213,9 +2213,7 @@ button {
 }
 
 .display-options {
-  display: none;
-  /* temporarily hidden while skeletal/functional-group rendering is stabilized */
-
+  display: flex;
   gap: 22px;
   padding: 13px 24px 20px;
 }
