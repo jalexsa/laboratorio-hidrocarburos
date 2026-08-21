@@ -5,7 +5,10 @@ import {
   findCommonNameSuggestion,
   levenshteinDistance,
 } from "../app/name-suggestions.ts";
-import { getVisibleBondInteractionHintActions } from "../app/bond-interaction-hints.ts";
+import {
+  canToggleBondStereochemistry,
+  getVisibleBondInteractionHintActions,
+} from "../app/bond-interaction-hints.ts";
 
 test("suggests close spellings from the common molecule catalog in both languages", () => {
   assert.deepEqual(findCommonNameSuggestion("fenool", "es"), { id: "phenol", name: "fenol" });
@@ -32,7 +35,7 @@ test("includes the ten requested common molecule families", () => {
 });
 
 test("does not offer broad suggestions for unrelated or exact input", () => {
-  assert.equal(findCommonNameSuggestion("glucosa", "es"), null);
+  assert.deepEqual(findCommonNameSuggestion("glucosa", "es"), { id: "glucose", name: "glucosa" });
   assert.equal(findCommonNameSuggestion("benceno", "es"), null);
   assert.equal(findCommonNameSuggestion("xy", "es"), null);
 });
@@ -46,4 +49,6 @@ test("hides only the E/Z canvas hint while stereochemistry is off", () => {
   const actions = ["change-order", "switch-ez"];
   assert.deepEqual(getVisibleBondInteractionHintActions(actions, false), ["change-order"]);
   assert.deepEqual(getVisibleBondInteractionHintActions(actions, true), actions);
+  assert.equal(canToggleBondStereochemistry(false, true), false);
+  assert.equal(canToggleBondStereochemistry(true, true), true);
 });

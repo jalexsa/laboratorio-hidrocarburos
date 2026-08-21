@@ -10,6 +10,7 @@ type CommonMolecule = {
   es: string;
   en: string;
   aliases: string[];
+  suggestOnExactFailure?: boolean;
 };
 
 const commonMolecules: CommonMolecule[] = [
@@ -23,6 +24,7 @@ const commonMolecules: CommonMolecule[] = [
   { id: "hexene", es: "hex-1-eno", en: "hex-1-ene", aliases: ["hexeno", "hex-1-eno", "hexene", "hex-1-ene"] },
   { id: "propene", es: "prop-1-eno", en: "prop-1-ene", aliases: ["propeno", "prop-1-eno", "propene", "prop-1-ene"] },
   { id: "butene", es: "but-1-eno", en: "but-1-ene", aliases: ["buteno", "but-1-eno", "butene", "but-1-ene"] },
+  { id: "glucose", es: "glucosa", en: "glucose", aliases: ["glucosa", "glucose"], suggestOnExactFailure: true },
 ];
 
 function normalizeName(value: string) {
@@ -70,7 +72,8 @@ export function findCommonNameSuggestion(
 
   if (!closest) return null;
   const allowedDistance = normalizedInput.length <= 5 ? 1 : Math.max(2, Math.floor(normalizedInput.length * 0.28));
-  if (closest.distance === 0 || closest.distance > allowedDistance) return null;
+  if (closest.distance > allowedDistance) return null;
+  if (closest.distance === 0 && !closest.molecule.suggestOnExactFailure) return null;
 
   return {
     id: closest.molecule.id,
