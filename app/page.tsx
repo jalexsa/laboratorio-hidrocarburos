@@ -32,7 +32,10 @@ import {
   inspectDoubleBondStereochemistry,
   toggleDoubleBondGeometry,
 } from "./double-bond-stereochemistry";
-import { getBondInteractionHintActions } from "./bond-interaction-hints";
+import {
+  getBondInteractionHintActions,
+  getVisibleBondInteractionHintActions,
+} from "./bond-interaction-hints";
 import {
   applyNomenclatureConvention,
   type NomenclatureConvention,
@@ -40,6 +43,10 @@ import {
   nomenclatureConventionLabel,
   stripStereochemicalDescriptors,
 } from "./nomenclature-conventions";
+import {
+  findCommonNameSuggestion,
+  type CommonNameSuggestion,
+} from "./name-suggestions";
 import {
   clipSkeletalParallelBondSegments,
   clipSkeletalRingDoubleBondSegments,
@@ -3602,6 +3609,9 @@ export default function Home() {
   const [iupacInput, setIupacInput] = useState("");
   const [nameBuilderBusy, setNameBuilderBusy] = useState(false);
   const [nameBuilderFeedback, setNameBuilderFeedback] = useState<NameBuilderFeedback | null>(null);
+  const [nameSuggestion, setNameSuggestion] = useState<CommonNameSuggestion | null>(null);
+  const [nameSuggestionPreview, setNameSuggestionPreview] = useState<Molecule | null>(null);
+  const [nameSuggestionPreviewLoading, setNameSuggestionPreviewLoading] = useState(false);
   const [smilesPanelOpen, setSmilesPanelOpen] = useState(false);
   const [smilesImporting, setSmilesImporting] = useState(false);
   const [smilesFeedback, setSmilesFeedback] = useState<HistoryTransferNotice | null>(null);
@@ -4027,9 +4037,8 @@ export default function Home() {
     return true;
   };
 
-  const constructFromIupacName = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const submittedName = iupacInput.trim();
+  const constructFromName = async (requestedName: string) => {
+    const submittedName = requestedName.trim();
     if (!submittedName) {
       setNameBuilderOpen(true);
       setNameBuilderFeedback({ kind: "error", message: "Escribe un nombre IUPAC para crear la estructura." });
@@ -4039,6 +4048,9 @@ export default function Home() {
 
     setNameBuilderBusy(true);
     setNameBuilderFeedback(null);
+    setNameSuggestion(null);
+    setNameSuggestionPreview(null);
+    setNameSuggestionPreviewLoading(false);
 
     try {
       let next: Molecule;
@@ -4108,12 +4120,14 @@ export default function Home() {
       setShowAlkylPalette(false);
       setShowRingPalette(false);
       setShowFunctionalPalette(false);
+      setIupacInput(submittedName);
       setNameBuilderFeedback({
         kind: "success",
         message: `Lista con ${engineLabel}: ${resultName}${commonName}.${serviceWarning} Ya quedó añadida a tu historial automático.`,
       });
     } catch (error) {
       setNameBuilderOpen(true);
+      setNameSuggestion(findCommonNameSuggestion(submittedName, language));
       setNameBuilderFeedback({
         kind: "error",
         message: preserveSourceName
@@ -4125,6 +4139,32 @@ export default function Home() {
     } finally {
       setNameBuilderBusy(false);
     }
+  };
+
+  const constructFromIupacName = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void constructFromName(iupacInput);
+  };
+
+  const loadNameSuggestionPreview = async () => {
+    if (!nameSuggestion || nameSuggestionPreview || nameSuggestionPreviewLoading) return;
+    setNameSuggestionPreviewLoading(true);
+    try {
+      const data = await resolveNameStructure(nameSuggestion.name);
+      const { moleculeFromSmiles } = await import("./openchemlib-adapter");
+      const converted = moleculeFromSmiles(data.smiles);
+      if (converted.ok) setNameSuggestionPreview(converted.molecule);
+    } catch {
+      // The correction remains usable even when a preview cannot be generated.
+    } finally {
+      setNameSuggestionPreviewLoading(false);
+    }
+  };
+
+  const applyNameSuggestion = () => {
+    if (!nameSuggestion) return;
+    setIupacInput(nameSuggestion.name);
+    void constructFromName(nameSuggestion.name);
   };
 
   const cycleTheme = () => {
@@ -5270,6 +5310,10 @@ export default function Home() {
     () => getBondInteractionHintActions(molecule),
     [molecule],
   );
+  const visibleBondInteractionHintActions = useMemo(
+    () => getVisibleBondInteractionHintActions(bondInteractionHintActions, showStereochemistry),
+    [bondInteractionHintActions, showStereochemistry],
+  );
   const isRingStructure = analysis.family !== "acyclic";
   const carbonFamilyLabel = analysis.family === "aromatic"
     ? t("Aromático")
@@ -5744,6 +5788,9 @@ export default function Home() {
                     onChange={(event) => {
                       setIupacInput(event.target.value);
                       setNameBuilderFeedback(null);
+                      setNameSuggestion(null);
+                      setNameSuggestionPreview(null);
+                      setNameSuggestionPreviewLoading(false);
                     }}
                     placeholder={language === "en" ? "E.g., 2-methylpropanoic acid" : "Ej.: ácido 2-metilpropanoico"}
                     autoComplete="off"
@@ -5777,6 +5824,9 @@ export default function Home() {
                       onClick={() => {
                         setIupacInput(language === "en" ? localizedIupac(example) : example);
                         setNameBuilderFeedback(null);
+                        setNameSuggestion(null);
+                        setNameSuggestionPreview(null);
+                        setNameSuggestionPreviewLoading(false);
                       }}
                     >
                       {localizedIupac(example)}
@@ -5793,6 +5843,33 @@ export default function Home() {
                 >
                   <span aria-hidden="true">{nameBuilderFeedback.kind === "success" ? "✓" : "!"}</span>
                   <p>{localizedDynamicText(nameBuilderFeedback.message)}</p>
+                </div>
+              )}
+              {nameSuggestion && (
+                <div className="name-suggestion" role="status">
+                  <span aria-hidden="true">?</span>
+                  <p>
+                    {t("Quizás quisiste decir:")}{" "}
+                    <button
+                      type="button"
+                      className="name-suggestion-name"
+                      disabled={nameBuilderBusy}
+                      onPointerEnter={() => { void loadNameSuggestionPreview(); }}
+                      onFocus={() => { void loadNameSuggestionPreview(); }}
+                      onClick={applyNameSuggestion}
+                    >
+                      {nameSuggestion.name}
+                      <span className="name-suggestion-tooltip" role="tooltip">
+                        {nameSuggestionPreview ? (
+                          <MoleculeHistoryPreview molecule={nameSuggestionPreview} />
+                        ) : nameSuggestionPreviewLoading ? (
+                          <small>{t("Generando vista previa…")}</small>
+                        ) : (
+                          <small>{t("Pasa el cursor para ver la estructura")}</small>
+                        )}
+                      </span>
+                    </button>{language === "en" ? "?" : ""}
+                  </p>
                 </div>
               )}
             </form>
@@ -6207,11 +6284,11 @@ export default function Home() {
               {structureFamilyLabel}
             </div>
 
-            {bondInteractionHintActions.length > 0 && (
+            {visibleBondInteractionHintActions.length > 0 && (
               <div className="bond-touch-hint" aria-hidden="true">
                 <span>↻</span>
                 <div className="bond-touch-hint-actions">
-                  {bondInteractionHintActions.map((action) => (
+                  {visibleBondInteractionHintActions.map((action) => (
                     <small key={action}>
                       {t(action === "change-order"
                         ? "Toca un enlace · cambiar orden de enlace"

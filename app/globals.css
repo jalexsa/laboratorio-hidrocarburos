@@ -3646,6 +3646,97 @@ button:focus-visible,
   line-height: 1.45;
 }
 
+.name-suggestion {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid #d8c68e;
+  border-radius: 11px;
+  background: #fff9e9;
+  color: #735820;
+}
+
+.name-suggestion > span {
+  display: grid;
+  flex: 0 0 19px;
+  width: 19px;
+  height: 19px;
+  place-items: center;
+  border-radius: 50%;
+  background: #f1dc9c;
+  color: #765a17;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.name-suggestion p {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.name-suggestion-name {
+  position: relative;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px dotted currentColor;
+  background: transparent;
+  color: #315f54;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 900;
+}
+
+.name-suggestion-name:hover,
+.name-suggestion-name:focus-visible {
+  color: #164d40;
+  outline: 0;
+}
+
+.name-suggestion-name:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.name-suggestion-tooltip {
+  position: absolute;
+  z-index: 4;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  display: grid;
+  min-width: 126px;
+  min-height: 44px;
+  place-items: center;
+  padding: 6px;
+  border: 1px solid #c7d9d3;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 8px 22px rgba(44, 79, 69, 0.16);
+  color: #59736b;
+  font-weight: 700;
+  opacity: 0;
+  transform: translate(-50%, 4px);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.name-suggestion-name:hover .name-suggestion-tooltip,
+.name-suggestion-name:focus-visible .name-suggestion-tooltip {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.name-suggestion-tooltip .history-molecule-preview {
+  width: 120px;
+  height: 64px;
+}
+
+.name-suggestion-tooltip small {
+  font-size: 8px;
+  white-space: nowrap;
+}
+
 html[data-theme="dark"] .name-builder-toggle {
   border-color: #3b6559;
   background: #1a312a;
@@ -3729,6 +3820,27 @@ html[data-theme="dark"] .name-builder-feedback.error {
 
 html[data-theme="dark"] .name-builder-feedback.error > span {
   background: #53332f;
+}
+
+html[data-theme="dark"] .name-suggestion {
+  border-color: #6d5b30;
+  background: #342d1d;
+  color: #e2ca85;
+}
+
+html[data-theme="dark"] .name-suggestion > span {
+  background: #6c5721;
+  color: #fff0bf;
+}
+
+html[data-theme="dark"] .name-suggestion-name {
+  color: #a8dfcf;
+}
+
+html[data-theme="dark"] .name-suggestion-tooltip {
+  border-color: #3d5c54;
+  background: #182924;
+  color: #a9c9bf;
 }
 
 @media (max-width: 760px) {
