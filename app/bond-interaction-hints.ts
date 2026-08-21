@@ -55,3 +55,11 @@ export function getVisibleBondInteractionHintActions(
 ) {
   return actions.filter((action) => action !== "switch-ez" || showStereochemistry);
 }
+
+/** Keeps canvas geometry immutable until the user has explicitly enabled E/Z. */
+export function canToggleBondStereochemistry(
+  showStereochemistry: boolean,
+  bondSupportsEZ: boolean,
+) {
+  return showStereochemistry && bondSupportsEZ;
+}

@@ -29,10 +29,12 @@ import {
 import {
   formatStereochemicalName,
   getMainChainStereoDescriptors,
+  isDoubleBondEZToggleAvailable,
   inspectDoubleBondStereochemistry,
   toggleDoubleBondGeometry,
 } from "./double-bond-stereochemistry";
 import {
+  canToggleBondStereochemistry,
   getBondInteractionHintActions,
   getVisibleBondInteractionHintActions,
 } from "./bond-interaction-hints";
@@ -4246,6 +4248,11 @@ export default function Home() {
 
     const currentOrder = getBondOrder(molecule.bonds[bondIndex]);
     if (currentOrder === 2 && !containingRing) {
+      const ezToggleAvailable = isDoubleBondEZToggleAvailable(molecule, a, b);
+      if (ezToggleAvailable && !canToggleBondStereochemistry(showStereochemistry, ezToggleAvailable)) {
+        setNotice("Activa Estereoquímica para alternar la configuración E/Z de este doble enlace.");
+        return;
+      }
       const stereoToggle = toggleDoubleBondGeometry(molecule, a, b);
       if (stereoToggle.ok) {
         const locantIndex = analysis.mainChain.slice(0, -1).findIndex(
@@ -6047,6 +6054,7 @@ export default function Home() {
                   ? stereoInspection.configuration
                   : null;
                 const stereoToggleAvailable = Boolean(stereoInspection?.stereogenic);
+                const stereoInteractionEnabled = showStereochemistry && stereoToggleAvailable;
                 const stereoLocantIndex = stereoToggleAvailable
                   ? analysis.mainChain.slice(0, -1).findIndex((atomId, index) => {
                       const nextAtomId = analysis.mainChain[index + 1];
@@ -6064,7 +6072,7 @@ export default function Home() {
                 return (
                   <g
                     key={`${a}-${b}`}
-                    className={`bond-control bond-order-${order} ${lockedBond ? "locked-bond" : ""} ${stereoToggleAvailable ? "stereo-bond-control" : ""}`}
+                    className={`bond-control bond-order-${order} ${lockedBond ? "locked-bond" : ""} ${stereoInteractionEnabled ? "stereo-bond-control" : ""}`}
                     onClick={() => cycleBondOrder(a, b)}
                     onKeyDown={(event) => {
                       if (event.key === "Enter" || event.key === " ") {
@@ -6078,10 +6086,12 @@ export default function Home() {
                       ? language === "en"
                         ? `${t(getBondOrderLabel(order))} bond locked to preserve ${isFunctionalBond ? "the functional group" : "the ring structure"}`
                         : `Enlace ${getBondOrderLabel(order)} fijado para conservar ${isFunctionalBond ? "el grupo funcional" : "la estructura cíclica"}`
-                      : stereoToggleAvailable
+                      : stereoInteractionEnabled
                         ? language === "en"
                           ? `Stereogenic double bond ${currentStereoLabel}. Activate to change to ${stereoLocant ?? ""}${nextStereoLabel}`
                           : `Doble enlace estereogénico ${currentStereoLabel}. Activar para cambiar a ${stereoLocant ?? ""}${nextStereoLabel}`
+                        : stereoToggleAvailable
+                          ? t("Activa Estereoquímica para alternar la configuración E/Z de este doble enlace")
                         : language === "en"
                           ? `${t(getBondOrderLabel(order))} bond. Activate to change to ${t(getBondOrderLabel(order === 3 ? 1 : (order + 1) as BondOrder))}`
                           : `Enlace ${getBondOrderLabel(order)}. Activar para cambiar a ${getBondOrderLabel(order === 3 ? 1 : (order + 1) as BondOrder)}`}
@@ -6103,7 +6113,7 @@ export default function Home() {
                         y2={segment.y2}
                       />
                     ))}
-                    {stereoToggleAvailable && (
+                    {stereoInteractionEnabled && (
                       <g
                         className="stereo-bond-marker"
                         transform={`translate(${markerX} ${markerY})`}
@@ -6735,7 +6745,7 @@ export default function Home() {
               {showIupacName && showNomenclatureHint && (
                 <small className="nomenclature-name-help">{t("Toca el nombre para cambiar la nomenclatura")}</small>
               )}
-              {showIupacName && analysis.commonName && (
+              {showIupacName && analysis.commonName && activeNomenclatureConvention !== "traditional" && (
                 <small>{t("Nombre tradicional:")} <strong>{translateCommonName(language, analysis.commonName)}</strong></small>
               )}
             </div>

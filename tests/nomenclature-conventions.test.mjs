@@ -10,6 +10,7 @@ import {
   formatStereochemicalName,
   getMainChainStereoDescriptors,
 } from "../app/double-bond-stereochemistry.ts";
+import { translateSpanishIupacToOpsin } from "../app/iupac-name-normalization.ts";
 
 function makeAromaticRing() {
   return {
@@ -46,6 +47,47 @@ test("keeps alcohol, ketone, amine, and acid suffixes systematic", () => {
   assert.equal(applyNomenclatureConvention("hexan-3-one", "traditional", "en"), "3-hexanone");
   assert.equal(applyNomenclatureConvention("butan-2-amine", "traditional", "en"), "2-butanamine");
   assert.equal(applyNomenclatureConvention("2-methylpropanoic acid", "traditional", "en"), "2-methylpropanoic acid");
+});
+
+test("uses common traditional names while preserving the IUPAC current mode", () => {
+  for (const [iupac, traditional] of [
+    ["ethyne", "acetylene"],
+    ["methylbenzene", "toluene"],
+    ["propan-2-one", "acetone"],
+    ["methanal", "formaldehyde"],
+    ["propan-2-ol", "2-propanol"],
+  ]) {
+    assert.equal(applyNomenclatureConvention(iupac, "current", "en"), iupac);
+    assert.equal(applyNomenclatureConvention(iupac, "traditional", "en"), traditional);
+  }
+
+  assert.equal(applyNomenclatureConvention("etino", "traditional", "es"), "acetileno");
+  assert.equal(applyNomenclatureConvention("metilbenceno", "traditional", "es"), "tolueno");
+  assert.equal(applyNomenclatureConvention("propan-2-ona", "traditional", "es"), "acetona");
+  assert.equal(applyNomenclatureConvention("metanal", "traditional", "es"), "formaldehído");
+});
+
+test("covers the extended common-name catalog by functional family", () => {
+  for (const [iupac, traditional] of [
+    ["methane", "methane"], ["ethane", "ethane"], ["propane", "propane"],
+    ["ethene", "ethylene"], ["prop-1-yne", "methylacetylene"],
+    ["methanol", "methanol"], ["propan-1-ol", "propanol"],
+    ["methoxymethane", "dimethyl ether"], ["methoxyethane", "ethyl methyl ether"], ["ethoxyethane", "diethyl ether"],
+    ["ethanal", "acetaldehyde"], ["propanal", "propionaldehyde"], ["butan-2-one", "ethyl methyl ketone"],
+    ["benzene", "benzene"], ["phenol", "phenol"], ["aniline", "aniline"], ["benzoic acid", "benzoic acid"],
+    ["ethenylbenzene", "styrene"], ["naphthalene", "naphthalene"],
+    ["methanoic acid", "formic acid"], ["ethanoic acid", "acetic acid"], ["propanoic acid", "propionic acid"],
+  ]) {
+    assert.equal(applyNomenclatureConvention(iupac, "traditional", "en"), traditional, iupac);
+  }
+});
+
+test("normalizes the extended Spanish common-name catalog before OPSIN", () => {
+  assert.equal(translateSpanishIupacToOpsin("acetileno"), "ethyne");
+  assert.equal(translateSpanishIupacToOpsin("metilacetileno"), "propyne");
+  assert.equal(translateSpanishIupacToOpsin("dimetil éter"), "methoxymethane");
+  assert.equal(translateSpanishIupacToOpsin("formaldehído"), "methanal");
+  assert.equal(translateSpanishIupacToOpsin("etil metil cetona"), "butan-2-one");
 });
 
 test("preserves E/Z independently from the nomenclature convention", () => {
