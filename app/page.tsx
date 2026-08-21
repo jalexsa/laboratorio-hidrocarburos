@@ -28,12 +28,18 @@ import {
 } from "./opsin-name-resolver";
 import {
   formatStereochemicalName,
-  getAromaticStereochemicalNameOptions,
   getMainChainStereoDescriptors,
   inspectDoubleBondStereochemistry,
   toggleDoubleBondGeometry,
 } from "./double-bond-stereochemistry";
 import { getBondInteractionHintActions } from "./bond-interaction-hints";
+import {
+  applyNomenclatureConvention,
+  type NomenclatureConvention,
+  nextNomenclatureConvention,
+  nomenclatureConventionLabel,
+  stripStereochemicalDescriptors,
+} from "./nomenclature-conventions";
 import {
   clipSkeletalParallelBondSegments,
   clipSkeletalRingDoubleBondSegments,
@@ -257,126 +263,7 @@ const commonAlkylAliases = {
   "1,1-dimetiletil": "terc-butil",
 } as const;
 
-const simpleAliasPrefixes: Record<string, string> = {
-  bis: "di",
-  tris: "tri",
-  tetrakis: "tetra",
-  pentakis: "penta",
-  hexakis: "hexa",
-};
-
-type InteractiveNamePart = {
-  text: string;
-  systematic?: AlkylAliasKey;
-  common?: string;
-  active?: boolean;
-  ringSystematic?: string;
-  ringSimplified?: string;
-  ringActive?: boolean;
-};
-
 type AlkylAliasKey = keyof typeof commonAlkylAliases;
-
-type RingUnsaturationNameOption = {
-  systematic: string;
-  simplified: string;
-  bondKind: "doble" | "triple";
-};
-
-const escapeRegularExpression = (value: string) =>
-  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-function getInteractiveNameParts(
-  name: string,
-  enabledAliases: readonly string[],
-  ringOption?: RingUnsaturationNameOption,
-  useSimplifiedRingName = false,
-): InteractiveNamePart[] {
-  const ringTarget = ringOption
-    ? useSimplifiedRingName ? ringOption.simplified : ringOption.systematic
-    : undefined;
-  const displayName = ringOption && ringTarget
-    ? name.replace(ringOption.systematic, ringTarget)
-    : name;
-  const enabled = new Set(enabledAliases);
-  const parts: InteractiveNamePart[] = [];
-  const simpleMultipliers = simplePrefixes.slice(2).filter(Boolean).join("|");
-  const complexMultipliers = Object.keys(simpleAliasPrefixes).join("|");
-  const aliases = Object.entries(commonAlkylAliases) as [AlkylAliasKey, string][];
-  let cursor = 0;
-
-  while (cursor < displayName.length) {
-    let nextMatch:
-      | {
-          index: number;
-          text: string;
-          systematic: AlkylAliasKey;
-          common: string;
-          active: boolean;
-        }
-      | undefined;
-
-    aliases.forEach(([systematic, common]) => {
-      const active = enabled.has(systematic);
-      const source = active
-        ? `(?:${simpleMultipliers})?${escapeRegularExpression(common)}`
-        : `(?:${complexMultipliers})?\\(${escapeRegularExpression(systematic)}\\)`;
-      const match = new RegExp(source).exec(displayName.slice(cursor));
-      if (!match) return;
-      const candidate = {
-        index: cursor + match.index,
-        text: match[0],
-        systematic,
-        common,
-        active,
-      };
-      if (
-        !nextMatch
-        || candidate.index < nextMatch.index
-        || (candidate.index === nextMatch.index && candidate.text.length > nextMatch.text.length)
-      ) {
-        nextMatch = candidate;
-      }
-    });
-
-    if (!nextMatch) {
-      parts.push({ text: displayName.slice(cursor) });
-      break;
-    }
-
-    if (nextMatch.index > cursor) {
-      parts.push({ text: displayName.slice(cursor, nextMatch.index) });
-    }
-    parts.push({
-      text: nextMatch.text,
-      systematic: nextMatch.systematic,
-      common: nextMatch.common,
-      active: nextMatch.active,
-    });
-    cursor = nextMatch.index + nextMatch.text.length;
-  }
-
-  const alkylParts = parts.length ? parts : [{ text: displayName }];
-  if (!ringOption || !ringTarget) return alkylParts;
-
-  return alkylParts.flatMap((part) => {
-    if (part.systematic) return [part];
-    const ringIndex = part.text.indexOf(ringTarget);
-    if (ringIndex < 0) return [part];
-    return [
-      ...(ringIndex > 0 ? [{ text: part.text.slice(0, ringIndex) }] : []),
-      {
-        text: ringTarget,
-        ringSystematic: ringOption.systematic,
-        ringSimplified: ringOption.simplified,
-        ringActive: useSimplifiedRingName,
-      },
-      ...(ringIndex + ringTarget.length < part.text.length
-        ? [{ text: part.text.slice(ringIndex + ringTarget.length) }]
-        : []),
-    ];
-  });
-}
 
 const subscriptDigits: Record<string, string> = {
   "0": "₀",
@@ -1475,32 +1362,6 @@ function unsaturatedRingBaseName(
     doubleBondLocants,
     tripleBondLocants,
   )}`;
-}
-
-export function getSingleRingUnsaturationNameOption(
-  analysis: Analysis,
-): RingUnsaturationNameOption | undefined {
-  if (
-    analysis.family !== "cycloalkane"
-    || analysis.functionalGroups.length > 0
-    || analysis.primaryFunctionalGroup
-  ) {
-    return undefined;
-  }
-
-  const hasSingleDouble = analysis.doubleBondLocants.length === 1
-    && analysis.tripleBondLocants.length === 0;
-  const hasSingleTriple = analysis.tripleBondLocants.length === 1
-    && analysis.doubleBondLocants.length === 0;
-  if (!hasSingleDouble && !hasSingleTriple) return undefined;
-
-  const suffix = hasSingleDouble ? "-1-eno" : "-1-ino";
-  if (!analysis.chainName.endsWith(suffix)) return undefined;
-  return {
-    systematic: analysis.chainName,
-    simplified: `${analysis.chainName.slice(0, -suffix.length)}${hasSingleDouble ? "eno" : "ino"}`,
-    bondKind: hasSingleDouble ? "doble" : "triple",
-  };
 }
 
 function ringSubstituentName(ring: RingInfo) {
@@ -3244,6 +3105,7 @@ async function resolveNameStructure(name: string): Promise<NameStructureResoluti
 
 const COMPLEX_NAME_LIMIT_MESSAGE = "El motor no puede interpretar heterociclos o aminas complejas en este momento.";
 const COMPLEX_NAME_UNAVAILABLE_MESSAGE = "Nombre no disponible para estructuras complejas";
+const STEREOCHEMISTRY_STORAGE_KEY = "hydrocarbon-lab-show-stereochemistry";
 
 export function localNamerCannotSafelyName(molecule: Molecule, analysis: Analysis) {
   const parentAtoms = new Set(analysis.mainChain);
@@ -3545,12 +3407,6 @@ export default function Home() {
     };
     return commonNames[name.toLocaleLowerCase("es")] ?? localizedIupac(name);
   };
-  const localizedAlkylPartText = (part: InteractiveNamePart) => {
-    if (language === "en" && part.active && part.common) {
-      return part.text.replace(part.common, localizedCommonAlkylName(part.common));
-    }
-    return localizedIupac(part.text);
-  };
   const localizedDynamicText = (value: string | null | undefined) => {
     const source = value ?? "";
     if (!source || language === "es") return source;
@@ -3726,14 +3582,17 @@ export default function Home() {
   const [viewMode, setViewMode] = useState<ViewMode>("condensed");
   const [newBondOrder, setNewBondOrder] = useState<BondOrder>(1);
   const [showIupacName, setShowIupacName] = useState(true);
+  const [nomenclatureConvention, setNomenclatureConvention] = useState<NomenclatureConvention>("current");
+  const [showStereochemistry, setShowStereochemistry] = useState(false);
+  const [stereochemistryPreferenceReady, setStereochemistryPreferenceReady] = useState(false);
+  const [hasUsedNomenclatureToggle, setHasUsedNomenclatureToggle] = useState(false);
+  const [showNomenclatureHint, setShowNomenclatureHint] = useState(false);
   const [showReasoningHelp, setShowReasoningHelp] = useState(true);
   const [showAlkylPalette, setShowAlkylPalette] = useState(false);
   const [showRingPalette, setShowRingPalette] = useState(false);
   const [showFunctionalPalette, setShowFunctionalPalette] = useState(false);
   const [ringInsertMode, setRingInsertMode] = useState<RingInsertMode>("replace");
   const [commonAlkylNameSelections, setCommonAlkylNameSelections] = useState<string[]>([]);
-  const [useSimplifiedRingUnsaturationName, setUseSimplifiedRingUnsaturationName] = useState(false);
-  const [technicalAromaticMolecule, setTechnicalAromaticMolecule] = useState<Molecule | null>(null);
   const [themePreference, setThemePreference] = useState<ThemePreference>("auto");
   const [automaticDark, setAutomaticDark] = useState(false);
   const [showCreatorCredit, setShowCreatorCredit] = useState(false);
@@ -3751,6 +3610,7 @@ export default function Home() {
   const lastPersistedSignature = useRef("");
   const previousSelectedId = useRef<number | null>(null);
   const valenceAlertTimer = useRef<number | null>(null);
+  const nomenclatureHintTimer = useRef<number | null>(null);
 
   const adjacency = useMemo(() => buildAdjacency(molecule), [molecule]);
   const calculatedAnalysis = useMemo(
@@ -3769,30 +3629,39 @@ export default function Home() {
   const effectiveShowNumbering = showNumbering && automaticNumberingAvailable;
   const selectedAtom = molecule.atoms.find((atom) => atom.id === selectedId) ?? molecule.atoms[0];
   const mainChainSet = useMemo(() => new Set(analysis.mainChain), [analysis.mainChain]);
-  const ringUnsaturationNameOption = useMemo(
-    () => getSingleRingUnsaturationNameOption(analysis),
-    [analysis],
-  );
-  const stereochemicalName = useMemo(
+  const pinName = useMemo(
     () => localSuggestedNameUnavailable
       ? COMPLEX_NAME_UNAVAILABLE_MESSAGE
-      : formatStereochemicalName(molecule, analysis.mainChain, analysis.name),
-    [analysis.mainChain, analysis.name, localSuggestedNameUnavailable, molecule],
+      : stripStereochemicalDescriptors(analysis.name),
+    [analysis.name, localSuggestedNameUnavailable],
   );
-  const aromaticStereochemicalNames = useMemo(
-    () => localSuggestedNameUnavailable
-      ? null
-      : getAromaticStereochemicalNameOptions(stereochemicalName, analysis.family),
-    [analysis.family, localSuggestedNameUnavailable, stereochemicalName],
+  const stereochemistryAvailable = useMemo(
+    () => !localSuggestedNameUnavailable
+      && getMainChainStereoDescriptors(molecule, analysis.mainChain).length > 0,
+    [analysis.mainChain, localSuggestedNameUnavailable, molecule],
   );
-  const showAromaticTechnicalName = Boolean(
-    aromaticStereochemicalNames && technicalAromaticMolecule === molecule,
+  const stereochemicalName = useMemo(
+    () => !stereochemistryAvailable
+      ? pinName
+      : formatStereochemicalName(molecule, analysis.mainChain, pinName),
+    [analysis.mainChain, molecule, pinName, stereochemistryAvailable],
   );
-  const visibleStereochemicalName = showAromaticTechnicalName
-    ? aromaticStereochemicalNames!.technicalName
-    : aromaticStereochemicalNames?.standardName ?? stereochemicalName;
-  const canonicalStereochemicalName = aromaticStereochemicalNames?.standardName
-    ?? stereochemicalName;
+  const nameWithSelectedStereochemistry = showStereochemistry && stereochemistryAvailable
+    ? stereochemicalName
+    : pinName;
+  const activeNomenclatureConvention = language === "en" && nomenclatureConvention === "school"
+    ? "current"
+    : nomenclatureConvention;
+  const displayedIupacName = useMemo(
+    () => applyNomenclatureConvention(
+      localizedIupac(nameWithSelectedStereochemistry),
+      activeNomenclatureConvention,
+      language,
+    ),
+    [activeNomenclatureConvention, language, nameWithSelectedStereochemistry],
+  );
+  const canonicalIupacName = nameWithSelectedStereochemistry;
+  const localizedCanonicalIupacName = localizedIupac(nameWithSelectedStereochemistry);
   const reasoningSteps = useMemo(
     () => buildIupacReasoningSteps(
       molecule,
@@ -3808,40 +3677,6 @@ export default function Home() {
       : reasoningSteps,
     [analysis, language, molecule, reasoningSteps],
   );
-  const interactiveNameParts = useMemo(
-    () => getInteractiveNameParts(
-      visibleStereochemicalName,
-      commonAlkylNameSelections,
-      ringUnsaturationNameOption,
-      useSimplifiedRingUnsaturationName,
-    ),
-    [
-      commonAlkylNameSelections,
-      ringUnsaturationNameOption,
-      useSimplifiedRingUnsaturationName,
-      visibleStereochemicalName,
-    ],
-  );
-  const canonicalNameParts = useMemo(
-    () => getInteractiveNameParts(
-      canonicalStereochemicalName,
-      commonAlkylNameSelections,
-      ringUnsaturationNameOption,
-      useSimplifiedRingUnsaturationName,
-    ),
-    [
-      canonicalStereochemicalName,
-      commonAlkylNameSelections,
-      ringUnsaturationNameOption,
-      useSimplifiedRingUnsaturationName,
-    ],
-  );
-  const displayedIupacName = interactiveNameParts.map((part) => part.text).join("");
-  const canonicalIupacName = canonicalNameParts.map((part) => part.text).join("");
-  const localizedDisplayedIupacName = localizedIupac(displayedIupacName);
-  const localizedCanonicalIupacName = localizedIupac(canonicalIupacName);
-  const hasInteractiveAlkylName = interactiveNameParts.some((part) => part.systematic);
-  const hasInteractiveRingName = interactiveNameParts.some((part) => part.ringSystematic);
   const isDarkTheme = themePreference === "dark" || (themePreference === "auto" && automaticDark);
   const historyFamilyLabel = analysis.primaryFunctionalLabel
     ?? analysis.functionalGroups[0]?.label
@@ -3896,6 +3731,34 @@ export default function Home() {
       window.history.replaceState(window.history.state, "", `${nextPath}${window.location.search}${window.location.hash}`);
     }
   }, [language]);
+
+  useEffect(() => {
+    try {
+      setShowStereochemistry(window.localStorage.getItem(STEREOCHEMISTRY_STORAGE_KEY) === "on");
+    } catch {
+      // The default remains off when browser storage is unavailable.
+    } finally {
+      setStereochemistryPreferenceReady(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!stereochemistryPreferenceReady) return;
+    try {
+      window.localStorage.setItem(
+        STEREOCHEMISTRY_STORAGE_KEY,
+        showStereochemistry ? "on" : "off",
+      );
+    } catch {
+      // The control remains usable for the current session without storage.
+    }
+  }, [showStereochemistry, stereochemistryPreferenceReady]);
+
+  useEffect(() => () => {
+    if (nomenclatureHintTimer.current !== null) {
+      window.clearTimeout(nomenclatureHintTimer.current);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -4220,7 +4083,6 @@ export default function Home() {
       const commonName = generatedAnalysis.commonName
         ? `; también se conoce como ${generatedAnalysis.commonName}`
         : "";
-      const omittedRingLocant = /^ciclo[a-z]+(?:eno|ino)$/.test(normalizedInput);
 
       const committed = commit(
         next,
@@ -4241,7 +4103,6 @@ export default function Home() {
       setSourceNameOverride(preserveTrustedSourceName ? submittedName : null);
       setSelectedId(next.atoms[0].id);
       setCommonAlkylNameSelections(enabledAliases);
-      setUseSimplifiedRingUnsaturationName(omittedRingLocant);
       setShowIupacName(true);
       setRingInsertMode("replace");
       setShowAlkylPalette(false);
@@ -4278,32 +4139,6 @@ export default function Home() {
       nextPreference === "auto"
         ? "Tema automático: sigue el dispositivo y activa la vista oscura entre las 19:00 y las 07:00."
         : `Tema ${nextPreference === "dark" ? "oscuro" : "claro"} fijado manualmente.`,
-    );
-  };
-
-  const toggleCommonAlkylName = (
-    systematic: keyof typeof commonAlkylAliases,
-    common: string,
-    currentlyActive: boolean,
-  ) => {
-    setCommonAlkylNameSelections((items) =>
-      currentlyActive
-        ? items.filter((item) => item !== systematic)
-        : [...new Set([...items, systematic])],
-    );
-    setNotice(
-      currentlyActive
-        ? `${common} volvió a mostrarse como (${systematic}) y se recalculó el orden alfabético.`
-        : `(${systematic}) ahora se muestra como ${common}; el nombre completo se reordenó alfabéticamente.`,
-    );
-  };
-
-  const toggleRingUnsaturationName = (option: RingUnsaturationNameOption) => {
-    setUseSimplifiedRingUnsaturationName((current) => !current);
-    setNotice(
-      useSimplifiedRingUnsaturationName
-        ? `${option.simplified} volvió a mostrarse como ${option.systematic}.`
-        : `${option.systematic} ahora se muestra como ${option.simplified}; en un ciclo con una sola insaturación, el localizador 1 puede omitirse.`,
     );
   };
 
@@ -5102,7 +4937,6 @@ export default function Home() {
 
       setSelectedId(next.atoms[0].id);
       setCommonAlkylNameSelections([]);
-      setUseSimplifiedRingUnsaturationName(false);
       setShowIupacName(true);
       setRingInsertMode("replace");
       setShowAlkylPalette(false);
@@ -5383,6 +5217,8 @@ export default function Home() {
     const methane = makeChain(1);
     commit(methane, "Molécula nueva: comienza desde un átomo de carbono.");
     setSelectedId(1);
+    setNomenclatureConvention("current");
+    setShowStereochemistry(false);
     setRingInsertMode("replace");
     setShowRingPalette(false);
     setShowFunctionalPalette(false);
@@ -5460,6 +5296,23 @@ export default function Home() {
     : themePreference === "dark"
       ? t("Oscuro")
       : t("Claro");
+  const cycleNomenclatureConvention = () => {
+    setNomenclatureConvention((current) => nextNomenclatureConvention(
+      language === "en" && current === "school" ? "current" : current,
+      language,
+    ));
+    if (hasUsedNomenclatureToggle) return;
+
+    setHasUsedNomenclatureToggle(true);
+    setShowNomenclatureHint(true);
+    if (nomenclatureHintTimer.current !== null) {
+      window.clearTimeout(nomenclatureHintTimer.current);
+    }
+    nomenclatureHintTimer.current = window.setTimeout(() => {
+      setShowNomenclatureHint(false);
+      nomenclatureHintTimer.current = null;
+    }, 3600);
+  };
 
   return (
     <main className="app-shell" onPointerDownCapture={dismissValenceAlert}>
@@ -6000,7 +5853,7 @@ export default function Home() {
             <svg
               role="img"
               aria-label={language === "en"
-                ? `${viewMode === "skeletal" ? "Skeletal representation" : "Condensed structural representation"} ${showIupacName ? `of ${localizedDisplayedIupacName}` : "of the constructed molecule"}`
+                ? `${viewMode === "skeletal" ? "Skeletal representation" : "Condensed structural representation"} ${showIupacName ? `of ${displayedIupacName}` : "of the constructed molecule"}`
                 : `${viewMode === "skeletal" ? "Representación esquelética" : "Representación semidesarrollada"} ${showIupacName ? `de ${displayedIupacName}` : "de la molécula construida"}`}
               viewBox={`${viewCenterX - viewWidth / 2} ${viewCenterY - viewHeight / 2} ${viewWidth} ${viewHeight}`}
             >
@@ -6752,6 +6605,20 @@ export default function Home() {
             <div className="analysis-status">
               <span className="valid-badge">{t("Estructura válida")}</span>
               <button
+                className={`stereochemistry-toggle ${showStereochemistry && stereochemistryAvailable ? "is-active" : ""}`}
+                type="button"
+                role="switch"
+                aria-checked={showStereochemistry && stereochemistryAvailable}
+                disabled={!stereochemistryAvailable}
+                title={stereochemistryAvailable
+                  ? t("Mostrar descriptores E/Z")
+                  : t("La estereoquímica E/Z no corresponde a esta estructura")}
+                onClick={() => setShowStereochemistry((visible) => !visible)}
+              >
+                <span aria-hidden="true" />
+                {t("Estereoquímica")}
+              </button>
+              <button
                 className="name-visibility-button"
                 onClick={() => {
                   setShowIupacName((visible) => !visible);
@@ -6771,111 +6638,25 @@ export default function Home() {
           <div className={`name-result ${showIupacName ? "" : "concealed"}`} aria-live="polite">
             <div className="name-copy">
               <p>
-                {showIupacName
-                  ? interactiveNameParts.map((part, index) =>
-                      part.systematic && part.common ? (
-                        <button
-                          className={`alkyl-name-toggle ${part.active ? "common-active" : ""}`}
-                          key={`${part.systematic}-${index}`}
-                          type="button"
-                          aria-pressed={Boolean(part.active)}
-                          aria-label={part.active
-                            ? language === "en"
-                              ? `Switch from ${localizedCommonAlkylName(part.common!)} back to ${localizedIupac(part.systematic!)}`
-                              : `Volver de ${part.common} a ${part.systematic}`
-                            : language === "en"
-                              ? `Change ${localizedIupac(part.systematic!)} to ${localizedCommonAlkylName(part.common!)}`
-                              : `Cambiar ${part.systematic} a ${part.common}`}
-                          title={part.active
-                            ? language === "en"
-                              ? `Return to (${localizedIupac(part.systematic!)})`
-                              : `Volver a (${part.systematic})`
-                            : language === "en"
-                              ? `Show as ${localizedCommonAlkylName(part.common!)}`
-                              : `Mostrar como ${part.common}`}
-                          onClick={() => toggleCommonAlkylName(
-                            part.systematic!,
-                            part.common!,
-                            Boolean(part.active),
-                          )}
-                        >
-                          {localizedAlkylPartText(part)}
-                        </button>
-                      ) : part.ringSystematic && part.ringSimplified && ringUnsaturationNameOption ? (
-                        <button
-                          className={`alkyl-name-toggle ring-name-toggle ${part.ringActive ? "common-active" : ""}`}
-                          key={`ring-name-${index}`}
-                          type="button"
-                          aria-pressed={Boolean(part.ringActive)}
-                          aria-label={part.ringActive
-                            ? language === "en"
-                              ? `Switch from ${localizedIupac(part.ringSimplified!)} back to ${localizedIupac(part.ringSystematic!)}`
-                              : `Volver de ${part.ringSimplified} a ${part.ringSystematic}`
-                            : language === "en"
-                              ? `Change ${localizedIupac(part.ringSystematic!)} to ${localizedIupac(part.ringSimplified!)}`
-                              : `Cambiar ${part.ringSystematic} a ${part.ringSimplified}`}
-                          title={part.ringActive
-                            ? language === "en"
-                              ? `Show ${localizedIupac(part.ringSystematic!)}`
-                              : `Mostrar ${part.ringSystematic}`
-                            : language === "en"
-                              ? `Omit locant 1: ${localizedIupac(part.ringSimplified!)}`
-                              : `Omitir el localizador 1: ${part.ringSimplified}`}
-                          onClick={() => toggleRingUnsaturationName(ringUnsaturationNameOption)}
-                        >
-                          {localizedIupac(part.text)}
-                        </button>
-                      ) : aromaticStereochemicalNames ? (
-                        <button
-                          className={`aromatic-name-toggle ${showAromaticTechnicalName ? "technical-active" : ""}`}
-                          key={`aromatic-name-${index}`}
-                          type="button"
-                          aria-pressed={showAromaticTechnicalName}
-                          aria-label={showAromaticTechnicalName
-                            ? language === "en" ? "Show the standard name without E/Z descriptors" : "Mostrar el nombre habitual sin descriptores E/Z"
-                            : language === "en" ? "Show the technical name with E/Z descriptors" : "Mostrar el nombre técnico con descriptores E/Z"}
-                          title={showAromaticTechnicalName
-                            ? language === "en" ? "Return to the standard name" : "Volver al nombre habitual"
-                            : language === "en" ? "View the engine's technical representation" : "Ver la representación técnica del motor"}
-                          onClick={() => {
-                            setTechnicalAromaticMolecule((current) =>
-                              current === molecule ? null : molecule,
-                            );
-                            setNotice(
-                              showAromaticTechnicalName
-                                ? "Nombre aromático habitual: se omiten los descriptores de la forma de Kekulé."
-                                : "Nombre técnico visible: muestra los descriptores que calcula el motor para los dobles enlaces alternados.",
-                            );
-                          }}
-                        >
-                          {localizedIupac(part.text)}
-                        </button>
-                      ) : (
-                        <span key={`name-part-${index}`}>{localizedIupac(part.text)}</span>
-                      ),
-                    )
-                  : t("Respuesta oculta")}
+                {showIupacName ? (
+                  <button
+                    className="nomenclature-name-toggle"
+                    type="button"
+                    onClick={cycleNomenclatureConvention}
+                    aria-label={t("Toca el nombre para cambiar la nomenclatura")}
+                    title={t("Toca el nombre para cambiar la nomenclatura")}
+                  >
+                    {displayedIupacName}
+                  </button>
+                ) : t("Respuesta oculta")}
               </p>
-              {showIupacName && (hasInteractiveAlkylName || hasInteractiveRingName) && (
-                <small className="alkyl-name-help">
-                  {hasInteractiveAlkylName && hasInteractiveRingName
-                    ? t("Pulsa cada fragmento destacado para alternar su forma de nomenclatura.")
-                    : hasInteractiveRingName
-                      ? t("Pulsa el nombre del ciclo para mostrar u omitir el localizador 1.")
-                      : t("Pulsa el sustituyente destacado para cambiar su forma; el orden alfabético se recalcula automáticamente.")}
+              {showIupacName && (
+                <small className="nomenclature-mode-label">
+                  {nomenclatureConventionLabel(activeNomenclatureConvention, language)}
                 </small>
               )}
-              {showIupacName && aromaticStereochemicalNames && (
-                <small className="aromatic-name-help">
-                  {showAromaticTechnicalName
-                    ? t("Pulsa el nombre para volver a la forma habitual de examen.")
-                    : t("Pulsa el nombre para consultar la forma técnica que interpreta el motor.")}
-                </small>
-              )}
-              {showIupacName && aromaticStereochemicalNames && showAromaticTechnicalName && (
-                <small className="aromatic-technical-note" role="note">
-                  {t("Estos descriptores reflejan cómo el motor geométrico codifica una forma de Kekulé del anillo con dobles enlaces alternados. No representan estructuras de resonancia distintas y, en la nomenclatura habitual, se omiten.")}
-                </small>
+              {showIupacName && showNomenclatureHint && (
+                <small className="nomenclature-name-help">{t("Toca el nombre para cambiar la nomenclatura")}</small>
               )}
               {showIupacName && analysis.commonName && (
                 <small>{t("Nombre tradicional:")} <strong>{translateCommonName(language, analysis.commonName)}</strong></small>
@@ -6886,7 +6667,7 @@ export default function Home() {
               aria-label={t("Copiar nombre IUPAC")}
               disabled={!showIupacName}
               onClick={() => {
-                navigator.clipboard?.writeText(localizedDisplayedIupacName);
+                navigator.clipboard?.writeText(displayedIupacName);
                 setNotice("Nombre copiado al portapapeles.");
               }}
             >

@@ -482,7 +482,6 @@ export function getMainChainStereoDescriptors(
       molecule,
       leftAtomId,
       rightAtomId,
-      { includeAromaticKekuleRepresentation: true },
     );
     if (!inspection.stereogenic || !inspection.configuration) return;
     descriptors.push({
