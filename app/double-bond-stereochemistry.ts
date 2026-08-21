@@ -30,6 +30,15 @@ export type DoubleBondStereoInspection =
       priorityAtomIds: [number, number];
     };
 
+export type DoubleBondStereoInspectionOptions = {
+  /**
+   * Aromatic Kekulé double bonds are not alkene E/Z centers. This opt-in is
+   * reserved for the existing technical aromatic-name view, which explains
+   * the engine's Kekulé representation without offering an E/Z interaction.
+   */
+  includeAromaticKekuleRepresentation?: boolean;
+};
+
 export type StereoDescriptor = {
   atomIds: [number, number];
   configuration: StereoConfiguration;
@@ -95,6 +104,19 @@ function findBond(molecule: StereoMolecule, left: number, right: number) {
     (bond) => (bond[0] === left && bond[1] === right)
       || (bond[0] === right && bond[1] === left),
   );
+}
+
+export function isAromaticBond(
+  molecule: StereoMolecule,
+  leftAtomId: number,
+  rightAtomId: number,
+) {
+  if (!findBond(molecule, leftAtomId, rightAtomId)) return false;
+  return Boolean(molecule.rings?.some(
+    (ring) => ring.kind === "aromatic"
+      && ring.atomIds.includes(leftAtomId)
+      && ring.atomIds.includes(rightAtomId),
+  ));
 }
 
 function atomBonds(molecule: StereoMolecule, atomId: number) {
@@ -247,9 +269,16 @@ export function inspectDoubleBondStereochemistry(
   molecule: StereoMolecule,
   leftAtomId: number,
   rightAtomId: number,
+  options: DoubleBondStereoInspectionOptions = {},
 ): DoubleBondStereoInspection {
   const bond = findBond(molecule, leftAtomId, rightAtomId);
   if (!bond || bondOrder(bond) !== 2) {
+    return { stereogenic: false, configuration: null, priorityAtomIds: null };
+  }
+  if (
+    isAromaticBond(molecule, leftAtomId, rightAtomId)
+    && !options.includeAromaticKekuleRepresentation
+  ) {
     return { stereogenic: false, configuration: null, priorityAtomIds: null };
   }
   if (
@@ -298,6 +327,26 @@ function componentAfterCut(
     });
   }
   return seen;
+}
+
+function isAcyclicBond(
+  molecule: StereoMolecule,
+  leftAtomId: number,
+  rightAtomId: number,
+) {
+  return !componentAfterCut(molecule, leftAtomId, leftAtomId, rightAtomId)
+    .has(rightAtomId);
+}
+
+/** True only for the non-aromatic, acyclic C=C bonds that the canvas can switch. */
+export function isDoubleBondEZToggleAvailable(
+  molecule: StereoMolecule,
+  leftAtomId: number,
+  rightAtomId: number,
+) {
+  if (isAromaticBond(molecule, leftAtomId, rightAtomId)) return false;
+  return inspectDoubleBondStereochemistry(molecule, leftAtomId, rightAtomId).stereogenic
+    && isAcyclicBond(molecule, leftAtomId, rightAtomId);
 }
 
 function rotateComponent(
@@ -369,15 +418,15 @@ export function toggleDoubleBondGeometry<T extends StereoMolecule>(
     };
   }
 
-  const leftComponent = componentAfterCut(molecule, leftAtomId, leftAtomId, rightAtomId);
-  const rightComponent = componentAfterCut(molecule, rightAtomId, leftAtomId, rightAtomId);
-  if (leftComponent.has(rightAtomId) || rightComponent.has(leftAtomId)) {
+  if (!isAcyclicBond(molecule, leftAtomId, rightAtomId)) {
     return {
       ok: false,
       reason: "cyclic",
       error: "Este doble enlace pertenece a un ciclo y no puede rotarse como un alqueno acíclico.",
     };
   }
+  const leftComponent = componentAfterCut(molecule, leftAtomId, leftAtomId, rightAtomId);
+  const rightComponent = componentAfterCut(molecule, rightAtomId, leftAtomId, rightAtomId);
 
   const next = {
     ...molecule,
@@ -433,6 +482,7 @@ export function getMainChainStereoDescriptors(
       molecule,
       leftAtomId,
       rightAtomId,
+      { includeAromaticKekuleRepresentation: true },
     );
     if (!inspection.stereogenic || !inspection.configuration) return;
     descriptors.push({

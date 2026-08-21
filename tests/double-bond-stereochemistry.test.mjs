@@ -8,6 +8,7 @@ import {
   inspectDoubleBondStereochemistry,
   toggleDoubleBondGeometry,
 } from "../app/double-bond-stereochemistry.ts";
+import { getBondInteractionHintActions } from "../app/bond-interaction-hints.ts";
 import { moleculeFromSmiles } from "../app/openchemlib-adapter.ts";
 
 function makeHex3EneE() {
@@ -78,6 +79,59 @@ test("does not assign E/Z when one alkene carbon has two equal substituents", ()
   const toggle = toggleDoubleBondGeometry(propene, 1, 2);
   assert.equal(toggle.ok, false);
   assert.equal(toggle.reason, "not-stereogenic");
+});
+
+test("excludes aromatic Kekulé C=C bonds from E/Z inspection and canvas hints", () => {
+  const aromaticCases = [
+    ["benceno", "c1ccccc1"],
+    ["fenol", "Oc1ccccc1"],
+    ["benceno-1,3,5-triol", "Oc1cc(O)cc(O)c1"],
+    ["ácido 3-hidroxibenzoico", "O=C(O)c1cccc(O)c1"],
+  ];
+
+  for (const [name, smiles] of aromaticCases) {
+    const converted = moleculeFromSmiles(smiles);
+    assert.equal(converted.ok, true, `${name}: ${converted.ok ? "" : converted.error}`);
+    if (!converted.ok) continue;
+    const aromaticDoubleBond = converted.molecule.bonds.find(([leftAtomId, rightAtomId, order = 1]) =>
+      order === 2 && converted.molecule.rings?.some(
+        (ring) => ring.kind === "aromatic"
+          && ring.atomIds.includes(leftAtomId)
+          && ring.atomIds.includes(rightAtomId),
+      ),
+    );
+    assert.ok(aromaticDoubleBond, `${name}: expected an aromatic Kekulé C=C bond`);
+    assert.equal(
+      inspectDoubleBondStereochemistry(
+        converted.molecule,
+        aromaticDoubleBond[0],
+        aromaticDoubleBond[1],
+      ).stereogenic,
+      false,
+      `${name}: aromatic C=C must not be an E/Z center`,
+    );
+    assert.equal(
+      getBondInteractionHintActions(converted.molecule).includes("switch-ez"),
+      false,
+      `${name}: canvas must not advertise an E/Z switch`,
+    );
+  }
+});
+
+test("keeps E/Z hints available for valid acyclic alkenes", () => {
+  for (const [name, smiles] of [
+    ["hex-2-eno", "CC=CCCC"],
+    ["hex-3-en-2-ona", "CC(=O)C=CCC"],
+  ]) {
+    const converted = moleculeFromSmiles(smiles);
+    assert.equal(converted.ok, true, `${name}: ${converted.ok ? "" : converted.error}`);
+    if (!converted.ok) continue;
+    assert.equal(
+      getBondInteractionHintActions(converted.molecule).includes("switch-ez"),
+      true,
+      `${name}: canvas must keep its E/Z switch`,
+    );
+  }
 });
 
 test("reads the E geometry produced by OPSIN and OpenChemLib", () => {

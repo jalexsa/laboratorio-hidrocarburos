@@ -33,6 +33,7 @@ import {
   inspectDoubleBondStereochemistry,
   toggleDoubleBondGeometry,
 } from "./double-bond-stereochemistry";
+import { getBondInteractionHintActions } from "./bond-interaction-hints";
 import {
   clipSkeletalParallelBondSegments,
   clipSkeletalRingDoubleBondSegments,
@@ -5429,6 +5430,10 @@ export default function Home() {
   const selectedValenceLimit = getValenceLimit(selectedAtom.id, molecule);
   const carbonCount = molecule.atoms.filter(isCarbonAtom).length;
   const hasMultipleBonds = analysis.doubleBondLocants.length > 0 || analysis.tripleBondLocants.length > 0;
+  const bondInteractionHintActions = useMemo(
+    () => getBondInteractionHintActions(molecule),
+    [molecule],
+  );
   const isRingStructure = analysis.family !== "acyclic";
   const carbonFamilyLabel = analysis.family === "aromatic"
     ? t("Aromático")
@@ -6349,11 +6354,20 @@ export default function Home() {
               {structureFamilyLabel}
             </div>
 
-            <div className="bond-touch-hint" aria-hidden="true">
-              <span>↻</span>
-              <strong>{t("Toca un enlace")}</strong>
-              <small>{t("orden de enlace · E ↔ Z en C=C")}</small>
-            </div>
+            {bondInteractionHintActions.length > 0 && (
+              <div className="bond-touch-hint" aria-hidden="true">
+                <span>↻</span>
+                <div className="bond-touch-hint-actions">
+                  {bondInteractionHintActions.map((action) => (
+                    <small key={action}>
+                      {t(action === "change-order"
+                        ? "Toca un enlace · cambiar orden de enlace"
+                        : "Toca un C=C · alternar E ↔ Z")}
+                    </small>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {viewMode === "skeletal" && (
               <div className="skeletal-hint">
