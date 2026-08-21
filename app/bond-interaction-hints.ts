@@ -47,3 +47,11 @@ export function getBondInteractionHintActions(
     ...(ezToggleAvailable ? ["switch-ez" as const] : []),
   ];
 }
+
+/** E/Z guidance is a presentation affordance, controlled by the independent UI switch. */
+export function getVisibleBondInteractionHintActions(
+  actions: readonly BondInteractionHintAction[],
+  showStereochemistry: boolean,
+) {
+  return actions.filter((action) => action !== "switch-ez" || showStereochemistry);
+}
